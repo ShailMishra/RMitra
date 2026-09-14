@@ -10,6 +10,10 @@ COPY RM-Backend-API/RM-Backend-API.csproj RM-Backend-API/
 COPY RM.DataModel/RM.DataModel.csproj RM.DataModel/
 COPY RM.DataRepository/RM.DataRepository.csproj RM.DataRepository/
 COPY RM.Infrastructure/RM.Infrastructure.csproj RM.Infrastructure/
+COPY RMitra.BuildingBlocks/RMitra.BuildingBlocks.csproj RMitra.BuildingBlocks/
+COPY RMitra.Domain/RMitra.Domain.csproj RMitra.Domain/
+COPY RMitra.Application/RMitra.Application.csproj RMitra.Application/
+COPY RMitra.Infrastructure/RMitra.Infrastructure.csproj RMitra.Infrastructure/
 
 RUN dotnet restore "RM-Backend-API/RM-Backend-API.csproj"
 

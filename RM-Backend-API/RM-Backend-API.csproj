@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <PackageReference Include="AspNetCoreRateLimit" Version="5.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.11" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="8.0.11" />
     <PackageReference Include="NLog.Web.AspNetCore" Version="6.1.3" />
     <PackageReference Include="Serilog.Extensions.Logging.File" Version="3.0.0" />
@@ -21,6 +22,9 @@
     <ProjectReference Include="..\RM.DataModel\RM.DataModel.csproj" />
     <ProjectReference Include="..\RM.DataRepository\RM.DataRepository.csproj" />
     <ProjectReference Include="..\RM.Infrastructure\RM.Infrastructure.csproj" />
+    <ProjectReference Include="..\RMitra.Application\RMitra.Application.csproj" />
+    <ProjectReference Include="..\RMitra.Infrastructure\RMitra.Infrastructure.csproj" />
+    <ProjectReference Include="..\RMitra.BuildingBlocks\RMitra.BuildingBlocks.csproj" />
   </ItemGroup>
 
   <ItemGroup>

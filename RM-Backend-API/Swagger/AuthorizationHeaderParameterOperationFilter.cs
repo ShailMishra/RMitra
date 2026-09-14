@@ -19,7 +19,15 @@ namespace RM_Backend_API.Swagger
 
             operation.Parameters.Add(new OpenApiParameter
             {
-                Name = "secret_key",
+                Name = "API_Key",
+                In = ParameterLocation.Header,
+                Required = false,
+                Schema = new OpenApiSchema { Type = "string" }
+            });
+
+            operation.Parameters.Add(new OpenApiParameter
+            {
+                Name = "Secret_Key",
                 In = ParameterLocation.Header,
                 Required = false,
                 Schema = new OpenApiSchema { Type = "string" }

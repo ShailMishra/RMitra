@@ -1,4 +1,5 @@
 using AspNetCoreRateLimit;
+using System.Text;
 using RM.DataRepository.CommonRequests.Helper;
 using RM.DataRepository.DBDapper;
 using RM.DataRepository.Health;
@@ -11,6 +12,14 @@ using RM_Backend_API.ActionFilters;
 using RM_Backend_API.ExceptionFilter;
 using RM_Backend_API.Health;
 using RM_Backend_API.Middleware;
+using RMitra.Api.ActionFilters;
+using RMitra.Api.Security;
+using RMitra.Application.Abstractions;
+using RMitra.BuildingBlocks.Security;
+using RMitra.Infrastructure;
+using RMitra.Infrastructure.Options;
+using RMitra.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Http.Features;
@@ -18,6 +27,8 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
@@ -72,6 +83,8 @@ namespace RM_Backend_API
             services.AddSingleton<IProcessingStrategy, AsyncKeyLockProcessingStrategy>();
 
             services.AddHttpContextAccessor();
+            services.AddScoped<ICurrentUser, CurrentUser>();
+            services.AddRMitraInfrastructure(Configuration);
             ConfigurationHelper.Initialize(Configuration);
 
             services.AddTransient<DapperContext>();
@@ -86,6 +99,43 @@ namespace RM_Backend_API
 
             var tokenSettings = Configuration.GetSection("TokenSettings").Get<TokenSettings>() ?? new TokenSettings();
             services.AddSingleton(tokenSettings);
+
+            var jwt = Configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
+            if (string.IsNullOrWhiteSpace(jwt.Secret))
+            {
+                jwt.Secret = tokenSettings.Secret_Key;
+            }
+
+            services.PostConfigure<JwtOptions>(options =>
+            {
+                if (string.IsNullOrWhiteSpace(options.Secret))
+                {
+                    options.Secret = tokenSettings.Secret_Key;
+                }
+            });
+
+            services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+                .AddJwtBearer(options =>
+                {
+                    var keyBytes = Encoding.UTF8.GetBytes(jwt.Secret);
+                    if (keyBytes.Length < 32)
+                    {
+                        Array.Resize(ref keyBytes, 32);
+                    }
+
+                    options.TokenValidationParameters = new TokenValidationParameters
+                    {
+                        ValidateIssuer = true,
+                        ValidateAudience = true,
+                        ValidateIssuerSigningKey = true,
+                        ValidateLifetime = true,
+                        ValidIssuer = jwt.Issuer,
+                        ValidAudience = jwt.Audience,
+                        IssuerSigningKey = new SymmetricSecurityKey(keyBytes)
+                    };
+                });
+
+            services.AddAuthorization();
 
             services.AddHttpClient<HttpSmsService>();
             services.AddScoped<LogSmsService>();
@@ -114,17 +164,53 @@ namespace RM_Backend_API
                 options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true;
                 options.Filters.Add(typeof(CustomExceptionFilter));
                 options.Filters.Add(typeof(ValidateModelAttribute));
+                options.Filters.Add(typeof(CustomAuthenticationFilter));
             })
             .AddNewtonsoftJson();
 
             services.AddSwaggerGen(options =>
             {
-                options.CustomSchemaIds(type => type.FullName);
+                options.CustomSchemaIds(type => type.FullName?.Replace("+", ".") ?? type.Name);
                 options.OperationFilter<AuthorizationHeaderParameterOperationFilter>();
-                options.SwaggerDoc("RasoiMitraAPI", new Microsoft.OpenApi.Models.OpenApiInfo
+                options.SwaggerDoc("RasoiMitraAPI", new OpenApiInfo
                 {
                     Title = "RasoiMitra Backend API",
                     Version = "v1.0.0"
+                });
+                options.SwaggerDoc("HomelyAPI", new OpenApiInfo
+                {
+                    Title = "HOMELY API",
+                    Version = "v1.0.0",
+                    Description = "Homely homemade food APIs. Base path /api/homely"
+                });
+                options.DocInclusionPredicate((docName, apiDesc) =>
+                {
+                    var relativePath = apiDesc.RelativePath ?? string.Empty;
+                    var isHomely = relativePath.StartsWith("api/homely", StringComparison.OrdinalIgnoreCase);
+                    return docName == "HomelyAPI" ? isHomely : !isHomely;
+                });
+                options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+                {
+                    Description = "JWT from Homely login / verify_otp. Example: Bearer {token}",
+                    Name = "Authorization",
+                    In = ParameterLocation.Header,
+                    Type = SecuritySchemeType.Http,
+                    Scheme = "bearer",
+                    BearerFormat = "JWT"
+                });
+                options.AddSecurityRequirement(new OpenApiSecurityRequirement
+                {
+                    {
+                        new OpenApiSecurityScheme
+                        {
+                            Reference = new OpenApiReference
+                            {
+                                Type = ReferenceType.SecurityScheme,
+                                Id = "Bearer"
+                            }
+                        },
+                        Array.Empty<string>()
+                    }
                 });
 
                 var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
@@ -176,8 +262,10 @@ namespace RM_Backend_API
             }
 
             app.UseIpRateLimiting();
+            app.UseStaticFiles();
             app.UseRouting();
             app.UseCors("AllowAllOrigins");
+            app.UseAuthentication();
             app.UseAuthorization();
 
             var swaggerEnabled = Configuration.GetSection("Swagger:Switch").Value == "Y";
@@ -185,7 +273,11 @@ namespace RM_Backend_API
             if (swaggerEnabled)
             {
                 app.UseSwagger();
-                app.UseSwaggerUI(options => options.SwaggerEndpoint("/swagger/RasoiMitraAPI/swagger.json", "RasoiMitra Backend API"));
+                app.UseSwaggerUI(options =>
+                {
+                    options.SwaggerEndpoint("/swagger/HomelyAPI/swagger.json", "HOMELY API");
+                    options.SwaggerEndpoint("/swagger/RasoiMitraAPI/swagger.json", "RasoiMitra Backend API");
+                });
             }
 
             app.UseEndpoints(endpoints =>
@@ -205,6 +297,15 @@ namespace RM_Backend_API
                     Predicate = check => check.Tags.Contains("ready")
                 });
             });
+
+            using var scope = app.ApplicationServices.CreateScope();
+            AdminSeeder.TrySeedAsync(
+                    scope.ServiceProvider.GetRequiredService<ISqlConnectionFactory>(),
+                    scope.ServiceProvider.GetRequiredService<IPasswordHasher>(),
+                    Configuration,
+                    loggerFactory.CreateLogger("AdminSeeder"))
+                .GetAwaiter()
+                .GetResult();
         }
     }
 }

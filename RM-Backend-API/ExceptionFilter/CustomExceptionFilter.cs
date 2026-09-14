@@ -2,6 +2,7 @@ using RM.DataRepository.Kitchen;
 using RM.DataRepository.MobileVerification;
 using RM.DataRepository.Sms;
 using RM.Infrastructure.Response;
+using RMitra.BuildingBlocks.Exceptions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -18,6 +19,24 @@ namespace RM_Backend_API.ExceptionFilter
             var descriptor = context.ActionDescriptor as ControllerActionDescriptor;
             var actionName = descriptor?.ActionName ?? string.Empty;
             var exception = context.Exception;
+
+            if (exception is AppException appException)
+            {
+                context.Result = new JsonResult(new ApiResponseMessage
+                {
+                    Success = false,
+                    Status_Code = appException.StatusCode,
+                    Internel_Status_Code = appException.StatusCode,
+                    Message = appException.Message,
+                    Method_Name = actionName,
+                    Data = appException.Details
+                })
+                {
+                    StatusCode = StatusCodes.Status200OK
+                };
+                context.ExceptionHandled = true;
+                return;
+            }
 
             if (exception is OtpException otpException)
             {

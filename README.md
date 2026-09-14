@@ -4,9 +4,16 @@ ASP.NET Core 8 API for RasoiMitra. Public hosting is set up for [Render](https:/
 
 ## Live URLs after deploy
 
-- Swagger: `https://<your-service>.onrender.com/swagger`
-- Health: `https://<your-service>.onrender.com/health`
-- Ping: `https://<your-service>.onrender.com/api/rasoi-mitra/ping`
+- Swagger: `https://rmitra.onrender.com/swagger`
+- Health: `https://rmitra.onrender.com/health`
+- Ping: `https://rmitra.onrender.com/api/rasoi-mitra/ping`
+
+Swagger has two docs:
+
+- **HOMELY API** — `/api/homely/*` (auth, kitchen, customer, orders, rider, payments)
+- **RasoiMitra Backend API** — `/api/rasoi-mitra/*`
+
+Homely SQL schema: run `database/Install_All.sql` on Azure SQL before using `/api/homely` routes.
 
 The API starts without a database. Azure SQL can be connected later with one environment variable.
 
