@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+**/.vs/
+**/*.user
+.git/
+.gitignore
+.github/
+RM-API/
+Logs/
+DataProtection-Keys/
+internal-nlog.txt
+**/*.md
+render.yaml
+*.zip
+*.docx

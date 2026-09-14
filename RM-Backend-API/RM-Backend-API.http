@@ -1,0 +1,126 @@
+@RM_Backend_API_HostAddress = https://localhost:7041
+@AdminApiKey = 3C25F265-F86D-419D-9A04-EA74A503C197
+@AdminSecretKey = PVmMSclp834KBIUa9O-XxpBsDJhsi1dsds74CiGaoo5
+
+### Health Check
+GET {{RM_Backend_API_HostAddress}}/api/rasoi-mitra/ping
+Accept: application/json
+
+###
+
+### Send OTP (OTP logged to console when SmsSettings.Provider = Log)
+POST {{RM_Backend_API_HostAddress}}/api/rasoi-mitra/v1/mobile/send-otp
+Content-Type: application/json
+
+{
+  "mobileNumber": "9876543210"
+}
+
+###
+
+### Verify OTP
+POST {{RM_Backend_API_HostAddress}}/api/rasoi-mitra/v1/mobile/verify-otp
+Content-Type: application/json
+
+{
+  "requestId": "OTP_REQ_123456",
+  "mobileNumber": "9876543210",
+  "otp": "123456"
+}
+
+###
+
+### Kitchen Registration (requires mobile verification token)
+POST {{RM_Backend_API_HostAddress}}/api/rasoi-mitra/v1/kitchens/register
+Content-Type: application/json
+
+{
+  "verificationToken": "mob_ver_abc123xyz",
+  "kitchenName": "Sharma Home Kitchen",
+  "ownerName": "Raj Sharma",
+  "mobileNumber": "9876543210",
+  "email": "raj.sharma@example.com",
+  "address": {
+    "line1": "12 MG Road",
+    "line2": "Near City Mall",
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "pincode": "400001"
+  },
+  "kitchenType": "Home Kitchen",
+  "cuisineTypes": ["North Indian", "Punjabi"],
+  "operatingHours": {
+    "openTime": "09:00",
+    "closeTime": "21:00",
+    "daysOpen": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+  },
+  "bankDetails": {
+    "accountHolderName": "Raj Sharma",
+    "accountNumber": "123456789012",
+    "ifscCode": "HDFC0001234",
+    "bankName": "HDFC Bank"
+  },
+  "panCard": "ABCDE1234F",
+  "kitchenPhoto": "https://storage.example.com/kitchens/photo.jpg"
+}
+
+###
+
+### Kitchen - Resubmit Documents (status must be ADDITIONAL_DOCUMENTS_REQUIRED)
+POST {{RM_Backend_API_HostAddress}}/api/rasoi-mitra/v1/kitchens/KIT_ABC123/resubmit-documents
+Content-Type: application/json
+
+{
+  "mobileNumber": "9876543210",
+  "panCard": "ABCDE1234F",
+  "kitchenPhoto": "https://storage.example.com/kitchens/updated-photo.jpg",
+  "documents": [
+    {
+      "documentType": "FSSAI License",
+      "documentUrl": "https://storage.example.com/kitchens/fssai.pdf"
+    }
+  ]
+}
+
+###
+
+### Admin - Get Pending Kitchens (requires api_key + secret_key headers)
+GET {{RM_Backend_API_HostAddress}}/api/rasoi-mitra/v1/admin/kitchens/pending
+Accept: application/json
+api_key: {{AdminApiKey}}
+secret_key: {{AdminSecretKey}}
+
+###
+
+### Admin - Approve Kitchen
+POST {{RM_Backend_API_HostAddress}}/api/rasoi-mitra/v1/admin/kitchens/KIT_ABC123/approve
+Content-Type: application/json
+api_key: {{AdminApiKey}}
+secret_key: {{AdminSecretKey}}
+
+###
+
+### Admin - Reject Kitchen
+POST {{RM_Backend_API_HostAddress}}/api/rasoi-mitra/v1/admin/kitchens/KIT_ABC123/reject
+Content-Type: application/json
+api_key: {{AdminApiKey}}
+secret_key: {{AdminSecretKey}}
+
+{
+  "reason": "Invalid PAN card document"
+}
+
+###
+
+### Admin - Request Additional Documents
+POST {{RM_Backend_API_HostAddress}}/api/rasoi-mitra/v1/admin/kitchens/KIT_ABC123/request-documents
+Content-Type: application/json
+api_key: {{AdminApiKey}}
+secret_key: {{AdminSecretKey}}
+
+{
+  "documentsRequired": ["FSSAI License", "Updated PAN Card"],
+  "remarks": "Please upload clear copies of the documents"
+}
+
+###

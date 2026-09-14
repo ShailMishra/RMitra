@@ -1,0 +1,12 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+Logs/
+DataProtection-Keys/
+internal-nlog.txt
+appsettings.*.local.json
+*.pubxml.user
+/RM-API/
+
