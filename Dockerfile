@@ -44,4 +44,6 @@ RUN chmod +x ./docker-entrypoint.sh && sed -i 's/\r$//' ./docker-entrypoint.sh
 
 COPY --from=build /app/publish .
 
+RUN mkdir -p /app/App_Data
+
 ENTRYPOINT ["/bin/sh", "./docker-entrypoint.sh"]

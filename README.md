@@ -11,11 +11,11 @@ ASP.NET Core 8 API for RasoiMitra. Public hosting is set up for [Render](https:/
 Swagger has two docs:
 
 - **HOMELY API** — `/api/homely/*` (auth, kitchen, customer, orders, rider, payments)
-- **RasoiMitra Backend API** — `/api/rasoi-mitra/*`
+- **RasoiMitra Backend API** — `/api/rasoi-mitra/*` (Excel file DB at `App_Data/RasoiMitra.xlsx`)
 
 Homely SQL schema: run `database/Install_All.sql` on Azure SQL before using `/api/homely` routes.
 
-The API starts without a database. Azure SQL can be connected later with one environment variable.
+The API starts without Azure SQL. Old RasoiMitra kitchen APIs use the Excel file `App_Data/RasoiMitra.xlsx` inside the app. Homely APIs still need Azure SQL later.
 
 ## Deploy on Render
 

@@ -1,4 +1,4 @@
-using RM.DataRepository.DBDapper;
+using RM.DataRepository.ExcelDb;
 
 namespace RM.DataRepository.Health
 {
@@ -9,21 +9,16 @@ namespace RM.DataRepository.Health
 
     public class HealthRepository : IHealthRepository
     {
-        private readonly DapperContext _context;
+        private readonly IExcelKitchenStore _excelStore;
 
-        public HealthRepository(DapperContext context)
+        public HealthRepository(IExcelKitchenStore excelStore)
         {
-            _context = context;
+            _excelStore = excelStore;
         }
 
         public bool TestDatabaseConnection()
         {
-            using var connection = _context.CreateConnection();
-            connection.Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = "SELECT 1";
-            command.ExecuteScalar();
-            return true;
+            return _excelStore.CanConnect();
         }
     }
 }

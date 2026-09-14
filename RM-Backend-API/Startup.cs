@@ -1,6 +1,7 @@
 using AspNetCoreRateLimit;
 using System.Text;
 using RM.DataRepository.CommonRequests.Helper;
+using RM.DataRepository.ExcelDb;
 using RM.DataRepository.DBDapper;
 using RM.DataRepository.Health;
 using RM.DataRepository.Kitchen;
@@ -89,6 +90,7 @@ namespace RM_Backend_API
 
             services.AddTransient<DapperContext>();
             services.AddTransient<DapperContextViewOnly>();
+            services.AddSingleton<IExcelKitchenStore, ExcelKitchenStore>();
             services.AddScoped<IHealthRepository, HealthRepository>();
 
             var otpSettings = Configuration.GetSection("OtpSettings").Get<OtpSettings>() ?? new OtpSettings();

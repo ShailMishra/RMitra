@@ -1,11 +1,9 @@
-using Dapper;
 using Newtonsoft.Json;
 using RM.DataModel.Admin;
 using RM.DataModel.Kitchen;
-using RM.DataRepository.DBDapper;
+using RM.DataRepository.ExcelDb;
 using RM.DataRepository.MobileVerification;
 using RM.Infrastructure.CommonClass;
-using System.Data;
 
 namespace RM.DataRepository.Kitchen
 {
@@ -21,7 +19,7 @@ namespace RM.DataRepository.Kitchen
 
     public class KitchenRepository : IKitchenRepository
     {
-        private readonly DapperContext _context;
+        private readonly IExcelKitchenStore _excelStore;
         private readonly IOtpRepository _otpRepository;
 
         private static readonly KitchenStatus[] PendingStatuses =
@@ -32,9 +30,9 @@ namespace RM.DataRepository.Kitchen
             KitchenStatus.RESUBMITTED
         };
 
-        public KitchenRepository(DapperContext context, IOtpRepository otpRepository)
+        public KitchenRepository(IExcelKitchenStore excelStore, IOtpRepository otpRepository)
         {
-            _context = context;
+            _excelStore = excelStore;
             _otpRepository = otpRepository;
         }
 
@@ -48,47 +46,31 @@ namespace RM.DataRepository.Kitchen
 
             var kitchenId = $"KIT_{Guid.NewGuid():N}"[..16].ToUpperInvariant();
             var now = DateTime.UtcNow;
-            var status = KitchenStatus.SUBMITTED.ToString();
 
-            const string insertSql = @"
-                INSERT INTO RM_Kitchens (
-                    KitchenId, KitchenName, OwnerName, MobileNumber, Email,
-                    AddressLine1, AddressLine2, City, State, Pincode,
-                    KitchenType, CuisineTypes, OperatingHours, BankDetails,
-                    PanCard, KitchenPhoto, Status, VerificationToken,
-                    CreatedAt, UpdatedAt, SubmittedAt
-                ) VALUES (
-                    @KitchenId, @KitchenName, @OwnerName, @MobileNumber, @Email,
-                    @AddressLine1, @AddressLine2, @City, @State, @Pincode,
-                    @KitchenType, @CuisineTypes, @OperatingHours, @BankDetails,
-                    @PanCard, @KitchenPhoto, @Status, @VerificationToken,
-                    @CreatedAt, @UpdatedAt, @SubmittedAt
-                )";
-
-            var parameters = new DynamicParameters();
-            parameters.Add("@KitchenId", kitchenId);
-            parameters.Add("@KitchenName", request.KitchenName.Trim());
-            parameters.Add("@OwnerName", request.OwnerName.Trim());
-            parameters.Add("@MobileNumber", request.MobileNumber.Trim());
-            parameters.Add("@Email", request.Email.Trim());
-            parameters.Add("@AddressLine1", request.Address.Line1.Trim());
-            parameters.Add("@AddressLine2", request.Address.Line2?.Trim());
-            parameters.Add("@City", request.Address.City.Trim());
-            parameters.Add("@State", request.Address.State.Trim());
-            parameters.Add("@Pincode", request.Address.Pincode.Trim());
-            parameters.Add("@KitchenType", request.KitchenType.Trim());
-            parameters.Add("@CuisineTypes", JsonConvert.SerializeObject(request.CuisineTypes));
-            parameters.Add("@OperatingHours", JsonConvert.SerializeObject(request.OperatingHours));
-            parameters.Add("@BankDetails", JsonConvert.SerializeObject(request.BankDetails));
-            parameters.Add("@PanCard", request.PanCard.Trim().ToUpperInvariant());
-            parameters.Add("@KitchenPhoto", request.KitchenPhoto.Trim());
-            parameters.Add("@Status", status);
-            parameters.Add("@VerificationToken", request.VerificationToken.Trim());
-            parameters.Add("@CreatedAt", now);
-            parameters.Add("@UpdatedAt", now);
-            parameters.Add("@SubmittedAt", now);
-
-            _context.Insert<int>(insertSql, parameters, CommandType.Text);
+            _excelStore.InsertKitchen(new ExcelKitchenRow
+            {
+                KitchenId = kitchenId,
+                KitchenName = request.KitchenName.Trim(),
+                OwnerName = request.OwnerName.Trim(),
+                MobileNumber = request.MobileNumber.Trim(),
+                Email = request.Email.Trim(),
+                AddressLine1 = request.Address.Line1.Trim(),
+                AddressLine2 = request.Address.Line2?.Trim() ?? string.Empty,
+                City = request.Address.City.Trim(),
+                State = request.Address.State.Trim(),
+                Pincode = request.Address.Pincode.Trim(),
+                KitchenType = request.KitchenType.Trim(),
+                CuisineTypes = JsonConvert.SerializeObject(request.CuisineTypes),
+                OperatingHours = JsonConvert.SerializeObject(request.OperatingHours),
+                BankDetails = JsonConvert.SerializeObject(request.BankDetails),
+                PanCard = request.PanCard.Trim().ToUpperInvariant(),
+                KitchenPhoto = request.KitchenPhoto.Trim(),
+                Status = KitchenStatus.SUBMITTED.ToString(),
+                VerificationToken = request.VerificationToken.Trim(),
+                CreatedAt = now,
+                UpdatedAt = now,
+                SubmittedAt = now
+            });
 
             UpdateKitchenStatus(kitchenId, KitchenStatus.DOCUMENT_VERIFICATION_PENDING,
                 "Registration submitted. Document verification pending.");
@@ -104,28 +86,25 @@ namespace RM.DataRepository.Kitchen
 
         public List<PendingKitchenSummary> GetPendingKitchens()
         {
-            var statusList = string.Join(",", PendingStatuses.Select(s => $"'{s}'"));
-
-            var sql = $@"
-                SELECT
-                    KitchenId AS KitchenId,
-                    KitchenName AS KitchenName,
-                    OwnerName AS OwnerName,
-                    MobileNumber AS MobileNumber,
-                    Email AS Email,
-                    KitchenType AS KitchenType,
-                    Status AS Status,
-                    SubmittedAt AS SubmittedAt
-                FROM RM_Kitchens
-                WHERE Status IN ({statusList})
-                ORDER BY SubmittedAt ASC";
-
-            return _context.GetAll<PendingKitchenSummary>(sql, new DynamicParameters(), CommandType.Text);
+            var statuses = PendingStatuses.Select(s => s.ToString()).ToArray();
+            return _excelStore.GetKitchensByStatuses(statuses)
+                .Select(kitchen => new PendingKitchenSummary
+                {
+                    KitchenId = kitchen.KitchenId,
+                    KitchenName = kitchen.KitchenName,
+                    OwnerName = kitchen.OwnerName,
+                    MobileNumber = kitchen.MobileNumber,
+                    Email = kitchen.Email,
+                    KitchenType = kitchen.KitchenType,
+                    Status = kitchen.Status,
+                    SubmittedAt = kitchen.SubmittedAt ?? kitchen.CreatedAt
+                })
+                .ToList();
         }
 
         public KitchenApprovalResponse ApproveKitchen(string kitchenId)
         {
-            var kitchen = GetKitchenById(kitchenId);
+            var kitchen = GetRequiredKitchen(kitchenId);
             ValidateStatusTransition(kitchen.Status, new[]
             {
                 KitchenStatus.SUBMITTED,
@@ -148,7 +127,7 @@ namespace RM.DataRepository.Kitchen
 
         public KitchenApprovalResponse RejectKitchen(string kitchenId, RejectKitchenRequest request)
         {
-            var kitchen = GetKitchenById(kitchenId);
+            var kitchen = GetRequiredKitchen(kitchenId);
             ValidateStatusTransition(kitchen.Status, new[]
             {
                 KitchenStatus.SUBMITTED,
@@ -158,20 +137,11 @@ namespace RM.DataRepository.Kitchen
                 KitchenStatus.ADDITIONAL_DOCUMENTS_REQUIRED
             });
 
-            const string sql = @"
-                UPDATE RM_Kitchens
-                SET Status = @Status,
-                    RejectionReason = @RejectionReason,
-                    UpdatedAt = @UpdatedAt
-                WHERE KitchenId = @KitchenId";
-
-            var parameters = new DynamicParameters();
-            parameters.Add("@KitchenId", kitchenId);
-            parameters.Add("@Status", KitchenStatus.REJECTED.ToString());
-            parameters.Add("@RejectionReason", request.Reason.Trim());
-            parameters.Add("@UpdatedAt", DateTime.UtcNow);
-
-            _context.Update<int>(sql, parameters, CommandType.Text);
+            kitchen.Status = KitchenStatus.REJECTED.ToString();
+            kitchen.RejectionReason = request.Reason.Trim();
+            kitchen.UpdatedAt = DateTime.UtcNow;
+            _excelStore.UpdateKitchen(kitchen);
+            _excelStore.InsertStatusHistory(kitchenId, kitchen.Status, request.Reason.Trim(), kitchen.UpdatedAt);
 
             return new KitchenApprovalResponse
             {
@@ -184,7 +154,7 @@ namespace RM.DataRepository.Kitchen
 
         public KitchenApprovalResponse RequestAdditionalDocuments(string kitchenId, RequestAdditionalDocumentsRequest request)
         {
-            var kitchen = GetKitchenById(kitchenId);
+            var kitchen = GetRequiredKitchen(kitchenId);
             ValidateStatusTransition(kitchen.Status, new[]
             {
                 KitchenStatus.SUBMITTED,
@@ -193,22 +163,12 @@ namespace RM.DataRepository.Kitchen
                 KitchenStatus.RESUBMITTED
             });
 
-            const string sql = @"
-                UPDATE RM_Kitchens
-                SET Status = @Status,
-                    AdditionalDocumentsRequired = @AdditionalDocumentsRequired,
-                    AdminRemarks = @AdminRemarks,
-                    UpdatedAt = @UpdatedAt
-                WHERE KitchenId = @KitchenId";
-
-            var parameters = new DynamicParameters();
-            parameters.Add("@KitchenId", kitchenId);
-            parameters.Add("@Status", KitchenStatus.ADDITIONAL_DOCUMENTS_REQUIRED.ToString());
-            parameters.Add("@AdditionalDocumentsRequired", JsonConvert.SerializeObject(request.DocumentsRequired));
-            parameters.Add("@AdminRemarks", request.Remarks?.Trim());
-            parameters.Add("@UpdatedAt", DateTime.UtcNow);
-
-            _context.Update<int>(sql, parameters, CommandType.Text);
+            kitchen.Status = KitchenStatus.ADDITIONAL_DOCUMENTS_REQUIRED.ToString();
+            kitchen.AdditionalDocumentsRequired = JsonConvert.SerializeObject(request.DocumentsRequired);
+            kitchen.AdminRemarks = request.Remarks?.Trim() ?? string.Empty;
+            kitchen.UpdatedAt = DateTime.UtcNow;
+            _excelStore.UpdateKitchen(kitchen);
+            _excelStore.InsertStatusHistory(kitchenId, kitchen.Status, request.Remarks?.Trim(), kitchen.UpdatedAt);
 
             return new KitchenApprovalResponse
             {
@@ -221,7 +181,7 @@ namespace RM.DataRepository.Kitchen
 
         public ResubmitDocumentsResponse ResubmitDocuments(string kitchenId, ResubmitDocumentsRequest request)
         {
-            var kitchen = GetKitchenWithMobile(kitchenId);
+            var kitchen = GetRequiredKitchen(kitchenId);
 
             if (!Enum.TryParse<KitchenStatus>(kitchen.Status, out var currentStatus) ||
                 currentStatus != KitchenStatus.ADDITIONAL_DOCUMENTS_REQUIRED)
@@ -246,26 +206,17 @@ namespace RM.DataRepository.Kitchen
                     "At least one document (panCard, kitchenPhoto, or documents) must be provided for resubmission.");
             }
 
-            const string sql = @"
-                UPDATE RM_Kitchens
-                SET PanCard = COALESCE(@PanCard, PanCard),
-                    KitchenPhoto = COALESCE(@KitchenPhoto, KitchenPhoto),
-                    ResubmittedDocuments = @ResubmittedDocuments,
-                    Status = @Status,
-                    UpdatedAt = @UpdatedAt
-                WHERE KitchenId = @KitchenId";
+            if (hasPanCard)
+                kitchen.PanCard = request.PanCard!.Trim().ToUpperInvariant();
+            if (hasKitchenPhoto)
+                kitchen.KitchenPhoto = request.KitchenPhoto!.Trim();
+            if (hasDocuments)
+                kitchen.ResubmittedDocuments = JsonConvert.SerializeObject(request.Documents);
 
-            var parameters = new DynamicParameters();
-            parameters.Add("@KitchenId", kitchenId);
-            parameters.Add("@PanCard", hasPanCard ? request.PanCard!.Trim().ToUpperInvariant() : null);
-            parameters.Add("@KitchenPhoto", hasKitchenPhoto ? request.KitchenPhoto!.Trim() : null);
-            parameters.Add("@ResubmittedDocuments", hasDocuments ? JsonConvert.SerializeObject(request.Documents) : null);
-            parameters.Add("@Status", KitchenStatus.RESUBMITTED.ToString());
-            parameters.Add("@UpdatedAt", DateTime.UtcNow);
-
-            _context.Update<int>(sql, parameters, CommandType.Text);
-
-            RecordStatusHistory(kitchenId, KitchenStatus.RESUBMITTED, "Kitchen owner resubmitted requested documents.");
+            kitchen.Status = KitchenStatus.RESUBMITTED.ToString();
+            kitchen.UpdatedAt = DateTime.UtcNow;
+            _excelStore.UpdateKitchen(kitchen);
+            _excelStore.InsertStatusHistory(kitchenId, KitchenStatus.RESUBMITTED.ToString(), "Kitchen owner resubmitted requested documents.", kitchen.UpdatedAt);
             UpdateKitchenStatus(kitchenId, KitchenStatus.UNDER_REVIEW, "Resubmitted documents are under admin review.");
 
             return new ResubmitDocumentsResponse
@@ -277,37 +228,9 @@ namespace RM.DataRepository.Kitchen
             };
         }
 
-        private KitchenRecord GetKitchenById(string kitchenId)
+        private ExcelKitchenRow GetRequiredKitchen(string kitchenId)
         {
-            const string sql = @"
-                SELECT KitchenId, Status
-                FROM RM_Kitchens
-                WHERE KitchenId = @KitchenId";
-
-            var parameters = new DynamicParameters();
-            parameters.Add("@KitchenId", kitchenId);
-
-            var kitchen = _context.Get<KitchenRecord>(sql, parameters, CommandType.Text);
-            if (kitchen == null)
-            {
-                throw new KitchenException(StatusMessage.StatusInformation.Kitchen_Not_Found,
-                    $"Kitchen with ID '{kitchenId}' was not found.");
-            }
-
-            return kitchen;
-        }
-
-        private KitchenRecord GetKitchenWithMobile(string kitchenId)
-        {
-            const string sql = @"
-                SELECT KitchenId, Status, MobileNumber
-                FROM RM_Kitchens
-                WHERE KitchenId = @KitchenId";
-
-            var parameters = new DynamicParameters();
-            parameters.Add("@KitchenId", kitchenId);
-
-            var kitchen = _context.Get<KitchenRecord>(sql, parameters, CommandType.Text);
+            var kitchen = _excelStore.GetKitchen(kitchenId);
             if (kitchen == null)
             {
                 throw new KitchenException(StatusMessage.StatusInformation.Kitchen_Not_Found,
@@ -319,35 +242,11 @@ namespace RM.DataRepository.Kitchen
 
         private void UpdateKitchenStatus(string kitchenId, KitchenStatus status, string? remarks = null)
         {
-            const string sql = @"
-                UPDATE RM_Kitchens
-                SET Status = @Status,
-                    UpdatedAt = @UpdatedAt
-                WHERE KitchenId = @KitchenId";
-
-            var parameters = new DynamicParameters();
-            parameters.Add("@KitchenId", kitchenId);
-            parameters.Add("@Status", status.ToString());
-            parameters.Add("@UpdatedAt", DateTime.UtcNow);
-
-            _context.Update<int>(sql, parameters, CommandType.Text);
-
-            RecordStatusHistory(kitchenId, status, remarks);
-        }
-
-        private void RecordStatusHistory(string kitchenId, KitchenStatus status, string? remarks = null)
-        {
-            const string historySql = @"
-                INSERT INTO RM_KitchenStatusHistory (KitchenId, Status, Remarks, CreatedAt)
-                VALUES (@KitchenId, @Status, @Remarks, @CreatedAt)";
-
-            var historyParams = new DynamicParameters();
-            historyParams.Add("@KitchenId", kitchenId);
-            historyParams.Add("@Status", status.ToString());
-            historyParams.Add("@Remarks", remarks);
-            historyParams.Add("@CreatedAt", DateTime.UtcNow);
-
-            _context.Insert<int>(historySql, historyParams, CommandType.Text);
+            var kitchen = GetRequiredKitchen(kitchenId);
+            kitchen.Status = status.ToString();
+            kitchen.UpdatedAt = DateTime.UtcNow;
+            _excelStore.UpdateKitchen(kitchen);
+            _excelStore.InsertStatusHistory(kitchenId, kitchen.Status, remarks, kitchen.UpdatedAt);
         }
 
         private static void ValidateStatusTransition(string currentStatus, KitchenStatus[] allowedStatuses)
@@ -358,13 +257,6 @@ namespace RM.DataRepository.Kitchen
                 throw new KitchenException(StatusMessage.StatusInformation.Invalid_Kitchen_Status_Transition,
                     $"Kitchen cannot be updated from status '{currentStatus}'.");
             }
-        }
-
-        private sealed class KitchenRecord
-        {
-            public string KitchenId { get; set; } = string.Empty;
-            public string Status { get; set; } = string.Empty;
-            public string MobileNumber { get; set; } = string.Empty;
         }
     }
 

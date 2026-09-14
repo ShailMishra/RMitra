@@ -9,4 +9,5 @@ internal-nlog.txt
 appsettings.*.local.json
 *.pubxml.user
 /RM-API/
+App_Data/*.xlsx
 

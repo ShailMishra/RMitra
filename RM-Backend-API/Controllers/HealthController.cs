@@ -48,7 +48,7 @@ namespace RM_Backend_API.Controllers
                 Success = true,
                 Status_Code = (int)HttpStatusCode.OK,
                 Internel_Status_Code = (int)StatusInformation.Success,
-                Message = databaseConnected ? "RM-Backend-API is running and database is reachable." : "RM-Backend-API is running but database is not reachable.",
+                Message = databaseConnected ? "RM-Backend-API is running and Excel DB is reachable." : "RM-Backend-API is running but Excel DB is not reachable.",
                 Method_Name = nameof(Ping),
                 Data = data
             });
