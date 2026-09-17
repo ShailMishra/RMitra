@@ -33,12 +33,12 @@ public class SettlementService : ISettlementService
     public async Task CreditOnDeliveredAsync(Guid orderGuid, CancellationToken cancellationToken = default)
     {
         using var db = _connections.Create();
-        var exists = await db.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM setlLedgerLines WHERE OrderGuid=@orderGuid", new { orderGuid });
+        var exists = await db.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM tblLedgerLines WHERE OrderGuid=@orderGuid", new { orderGuid });
         if (exists > 0)
             return;
 
         var order = await db.QuerySingleAsync<(Guid KitchenGuid, decimal ItemTotal, decimal DeliveryFee, string DeliveryMode)>(
-            "SELECT KitchenGuid, ItemTotal, DeliveryFee, DeliveryMode FROM ordOrders WHERE Id=@orderGuid", new { orderGuid });
+            "SELECT KitchenGuid, ItemTotal, DeliveryFee, DeliveryMode FROM tblOrders WHERE Id=@orderGuid", new { orderGuid });
 
         var commission = Math.Round(order.ItemTotal * _commerce.CommissionPercent / 100m, 2);
         var gst = Math.Round(commission * _commerce.GstPercent / 100m, 2);
@@ -51,7 +51,7 @@ public class SettlementService : ISettlementService
         if (order.DeliveryMode == DeliveryModes.Rider)
         {
             var riderGuid = await db.ExecuteScalarAsync<Guid?>(
-                "SELECT RiderGuid FROM delDeliveries WHERE OrderGuid=@orderGuid", new { orderGuid });
+                "SELECT RiderGuid FROM tblDeliveries WHERE OrderGuid=@orderGuid", new { orderGuid });
             if (riderGuid is not null)
             {
                 var riderNet = Math.Round(order.DeliveryFee * _commerce.RiderSharePercent / 100m, 2);
@@ -71,7 +71,7 @@ public class SettlementService : ISettlementService
     {
         using var db = _connections.Create();
         var riderId = await db.QuerySingleOrDefaultAsync<Guid?>(
-            "SELECT Id FROM delRiders WHERE UserId=@userId", new { userId })
+            "SELECT Id FROM tblRiders WHERE UserId=@userId", new { userId })
             ?? throw AppException.NotFound("Rider not found.");
         return await LoadLedger(db, "RIDER", riderId);
     }
@@ -90,7 +90,7 @@ public class SettlementService : ISettlementService
 
         var parties = (await db.QueryAsync<(string PartyType, Guid PartyGuid, decimal Amount)>(
             @"SELECT PartyType, PartyGuid, SUM(Amount) AS Amount
-              FROM setlLedgerLines
+              FROM tblLedgerLines
               WHERE CreatedAt>=@start AND CreatedAt<=@end
               GROUP BY PartyType, PartyGuid",
             new { start, end })).ToList();
@@ -111,7 +111,7 @@ public class SettlementService : ISettlementService
             };
 
             await db.ExecuteAsync(
-                @"INSERT INTO setlSettlements
+                @"INSERT INTO tblSettlements
                     (Id, SettlementId, PartyType, PartyGuid, PeriodStart, PeriodEnd, Amount, Status, InvoiceUrl, Utr, CreatedAt)
                   VALUES
                     (@Id, @SettlementId, @PartyType, @PartyGuid, @PeriodStart, @PeriodEnd, @Amount, @Status, @InvoiceUrl, @Utr, SYSUTCDATETIME())",
@@ -138,7 +138,7 @@ public class SettlementService : ISettlementService
     {
         using var db = _connections.Create();
         var rows = await db.QueryAsync<SettlementDto>(
-            "SELECT SettlementId, PartyType, Amount, Status, PeriodStart, PeriodEnd, InvoiceUrl, Utr FROM setlSettlements ORDER BY CreatedAt DESC");
+            "SELECT SettlementId, PartyType, Amount, Status, PeriodStart, PeriodEnd, InvoiceUrl, Utr FROM tblSettlements ORDER BY CreatedAt DESC");
         return rows.ToList();
     }
 
@@ -146,13 +146,13 @@ public class SettlementService : ISettlementService
     {
         using var db = _connections.Create();
         return await db.QuerySingleOrDefaultAsync<SettlementDto>(
-            "SELECT SettlementId, PartyType, Amount, Status, PeriodStart, PeriodEnd, InvoiceUrl, Utr FROM setlSettlements WHERE SettlementId=@settlementId",
+            "SELECT SettlementId, PartyType, Amount, Status, PeriodStart, PeriodEnd, InvoiceUrl, Utr FROM tblSettlements WHERE SettlementId=@settlementId",
             new { settlementId }) ?? throw AppException.NotFound("Settlement not found.");
     }
 
     private static async Task InsertLine(System.Data.IDbConnection db, string partyType, Guid partyGuid, Guid orderGuid, decimal amount, string description) =>
         await db.ExecuteAsync(
-            @"INSERT INTO setlLedgerLines (PartyType, PartyGuid, OrderGuid, Amount, Description, CreatedAt)
+            @"INSERT INTO tblLedgerLines (PartyType, PartyGuid, OrderGuid, Amount, Description, CreatedAt)
               VALUES (@partyType, @partyGuid, @orderGuid, @amount, @description, SYSUTCDATETIME())",
             new { partyType, partyGuid, orderGuid, amount, description });
 
@@ -160,8 +160,8 @@ public class SettlementService : ISettlementService
     {
         var lines = (await db.QueryAsync<(string OrderId, decimal Amount, string Description, DateTime CreatedAt)>(
             @"SELECT o.OrderId, l.Amount, l.Description, l.CreatedAt
-              FROM setlLedgerLines l
-              INNER JOIN ordOrders o ON o.Id=l.OrderGuid
+              FROM tblLedgerLines l
+              INNER JOIN tblOrders o ON o.Id=l.OrderGuid
               WHERE l.PartyType=@partyType AND l.PartyGuid=@partyGuid
               ORDER BY l.CreatedAt DESC",
             new { partyType, partyGuid })).ToList();

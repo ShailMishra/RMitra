@@ -30,6 +30,6 @@ public class HealthController : ApiControllerBase
     {
         using var db = _connections.Create();
         db.Open();
-        return this.OkCustom(null, new { status = "Ready", database = "HomelyFood", utc = DateTime.UtcNow }, _logger);
+        return this.OkCustom(null, new { status = "Ready", database = "RasoiMitra", utc = DateTime.UtcNow }, _logger);
     }
 }

@@ -1,23 +1,21 @@
 /*
-    HOMELY dedicated database (local SQL Server).
-    Run against the SQL Server instance, not an existing application DB.
+    RasoiMitra dedicated database.
+    Local:  sqlcmd -S "(localdb)\MSSQLLocalDB" -E -I -i Install_All.sql
+    Azure:  create the database with Deploy-AzureSql.ps1 (Azure SQL cannot CREATE DATABASE from T-SQL),
+            then install schema:
+            sqlcmd -S tcp:SERVER.database.windows.net,1433 -d RasoiMitra -U USER -P PASSWORD -I -i Install_All.sql
+
+    EngineEdition 5 = Azure SQL Database.
 */
 
-IF DB_ID(N'HomelyFood') IS NULL
+IF SERVERPROPERTY('EngineEdition') <> 5 AND DB_ID(N'RasoiMitra') IS NULL
 BEGIN
-    CREATE DATABASE [HomelyFood];
+    CREATE DATABASE [RasoiMitra];
 END
 GO
 
-USE [HomelyFood];
-GO
-
-IF OBJECT_ID(N'core.NumberSeries', N'U') IS NULL
+IF SERVERPROPERTY('EngineEdition') <> 5
 BEGIN
-    CREATE TABLE core.NumberSeries
-    (
-        Prefix      NVARCHAR(10) NOT NULL CONSTRAINT PK_NumberSeries PRIMARY KEY,
-        LastNumber  INT          NOT NULL
-    );
+    USE [RasoiMitra];
 END
 GO

@@ -1,3 +1,4 @@
+using System.Data;
 using Dapper;
 using Microsoft.Extensions.Options;
 using RMitra.Application.Abstractions;
@@ -42,23 +43,11 @@ public class IdentityService : IIdentityService
         var purpose = request.Purpose.Trim().ToUpperInvariant();
         using var db = _connections.Create();
 
-        var recentSends = await db.ExecuteScalarAsync<int>(
-            @"SELECT COUNT(1) FROM mstOtpRequests
-              WHERE MobileNumber = @mobile AND Purpose = @purpose
-                AND CreatedAt >= DATEADD(MINUTE, -15, SYSUTCDATETIME())",
-            new { mobile, purpose });
-
-        if (recentSends >= _otp.MaxSendPer15Minutes)
-            throw AppException.RateLimited();
-
         var otp = Random.Shared.Next(0, 1_000_000).ToString($"D{_otp.Length}");
         var requestId = "OTP_REQ_" + Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
 
-        await db.ExecuteAsync(
-            @"INSERT INTO mstOtpRequests
-                (Id, RequestId, MobileNumber, Purpose, OtpHash, AttemptCount, ExpiresAt, CreatedAt)
-              VALUES
-                (@Id, @RequestId, @MobileNumber, @Purpose, @OtpHash, 0, @ExpiresAt, SYSUTCDATETIME())",
+        var sendResult = await db.QuerySingleAsync<SendOtpDbResult>(
+            "uspSendOtp",
             new
             {
                 Id = Guid.NewGuid(),
@@ -66,8 +55,13 @@ public class IdentityService : IIdentityService
                 MobileNumber = mobile,
                 Purpose = purpose,
                 OtpHash = OtpHasher.Hash(otp, mobile),
-                ExpiresAt = DateTime.UtcNow.AddMinutes(_otp.ExpiryMinutes)
-            });
+                ExpiresAt = DateTime.UtcNow.AddMinutes(_otp.ExpiryMinutes),
+                MaxSendPer15Minutes = _otp.MaxSendPer15Minutes
+            },
+            commandType: CommandType.StoredProcedure);
+
+        if (!sendResult.Inserted)
+            throw AppException.RateLimited();
 
         return new SendOtpResponse
         {
@@ -83,8 +77,9 @@ public class IdentityService : IIdentityService
         using var db = _connections.Create();
 
         var otpRow = await db.QuerySingleOrDefaultAsync<OtpRequest>(
-            "SELECT * FROM mstOtpRequests WHERE RequestId = @requestId",
-            new { requestId }) ?? throw AppException.NotFound("OTP requestId not found.");
+            "uspVerifyOtp",
+            new { requestId },
+            commandType: CommandType.StoredProcedure) ?? throw AppException.NotFound("OTP requestId not found.");
 
         if (!string.Equals(otpRow.MobileNumber, mobile, StringComparison.Ordinal))
             throw AppException.Unauthorized("OTP does not match this mobile number.");
@@ -97,16 +92,15 @@ public class IdentityService : IIdentityService
 
         if (!string.Equals(otpRow.OtpHash, OtpHasher.Hash(request.Otp, mobile), StringComparison.Ordinal))
         {
-            await db.ExecuteAsync("UPDATE mstOtpRequests SET AttemptCount = AttemptCount + 1 WHERE Id = @Id", new { otpRow.Id });
+            await db.ExecuteAsync("uspVerifyOtpIncrementAttempt", new { otpRow.Id }, commandType: CommandType.StoredProcedure);
             throw AppException.Unauthorized("Invalid OTP.");
         }
 
         var token = "mob_ver_" + Guid.NewGuid().ToString("N")[..12];
         await db.ExecuteAsync(
-            @"UPDATE mstOtpRequests
-              SET VerifiedAt = SYSUTCDATETIME(), VerificationToken = @token, TokenExpiresAt = DATEADD(MINUTE, 30, SYSUTCDATETIME())
-              WHERE Id = @Id",
-            new { otpRow.Id, token });
+            "uspVerifyOtpConsume",
+            new { otpRow.Id, token },
+            commandType: CommandType.StoredProcedure);
 
         var user = await FindUser(db, mobile, otpRow.Purpose);
         if (user is not null)
@@ -141,8 +135,9 @@ public class IdentityService : IIdentityService
         else
         {
             await db.ExecuteAsync(
-                "UPDATE mstUsers SET PasswordHash = @hash, UpdatedAt = SYSUTCDATETIME() WHERE Id = @Id",
-                new { user.Id, hash = _passwords.Hash(request.Password) });
+                "uspSetPassword",
+                new { user.Id, PasswordHash = _passwords.Hash(request.Password) },
+                commandType: CommandType.StoredProcedure);
         }
     }
 
@@ -195,8 +190,9 @@ public class IdentityService : IIdentityService
     internal async Task<OtpRequest> RequireFreshToken(System.Data.IDbConnection db, string verificationToken)
     {
         var otp = await db.QuerySingleOrDefaultAsync<OtpRequest>(
-            "SELECT * FROM mstOtpRequests WHERE VerificationToken = @verificationToken",
-            new { verificationToken }) ?? throw AppException.Unauthorized("Verification token is invalid.");
+            "uspRequireFreshToken",
+            new { verificationToken },
+            commandType: CommandType.StoredProcedure) ?? throw AppException.Unauthorized("Verification token is invalid.");
 
         if (otp.TokenExpiresAt < DateTime.UtcNow)
             throw AppException.Unauthorized("Verification token has expired.");
@@ -206,8 +202,9 @@ public class IdentityService : IIdentityService
 
     internal static async Task<User?> FindUser(System.Data.IDbConnection db, string mobile, string purpose) =>
         await db.QuerySingleOrDefaultAsync<User>(
-            "SELECT * FROM mstUsers WHERE MobileNumber = @mobile AND Role = @purpose",
-            new { mobile, purpose });
+            "uspFindUser",
+            new { MobileNumber = mobile, Purpose = purpose },
+            commandType: CommandType.StoredProcedure);
 
     internal async Task<User> InsertUser(System.Data.IDbConnection db, string mobile, string role, string name, string? passwordHash, string? email)
     {
@@ -232,10 +229,13 @@ public class IdentityService : IIdentityService
             UpdatedAt = DateTime.UtcNow
         };
 
-        await db.ExecuteAsync(
-            @"INSERT INTO mstUsers (Id, UserCode, FullName, MobileNumber, Email, Role, PasswordHash, Status, CreatedAt, UpdatedAt)
-              VALUES (@Id, @UserCode, @FullName, @MobileNumber, @Email, @Role, @PasswordHash, @Status, @CreatedAt, @UpdatedAt)",
-            user);
+        await db.ExecuteAsync("uspInsertUser", user, commandType: CommandType.StoredProcedure);
         return user;
+    }
+
+    private sealed class SendOtpDbResult
+    {
+        public int RecentCount { get; set; }
+        public bool Inserted { get; set; }
     }
 }

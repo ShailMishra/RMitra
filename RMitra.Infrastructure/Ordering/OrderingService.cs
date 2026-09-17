@@ -57,20 +57,20 @@ public class OrderingService : IOrderingService
         var cart = await GetOrCreateCart(db, userId);
         if (cart.KitchenGuid is not null && cart.KitchenGuid != kitchen.Id)
         {
-            await db.ExecuteAsync("DELETE FROM ordCartItems WHERE CartId=@Id", new { cart.Id });
+            await db.ExecuteAsync("DELETE FROM tblCartItems WHERE CartId=@Id", new { cart.Id });
         }
 
-        await db.ExecuteAsync("DELETE FROM ordCartItems WHERE CartId=@Id", new { cart.Id });
+        await db.ExecuteAsync("DELETE FROM tblCartItems WHERE CartId=@Id", new { cart.Id });
         foreach (var line in request.Lines)
         {
             var item = await db.QuerySingleOrDefaultAsync<MenuItem>(
-                "SELECT * FROM catMenuItems WHERE ItemId=@ItemId AND Status='PUBLISHED'", line)
+                "SELECT * FROM tblMenuItems WHERE ItemId=@ItemId AND Status='PUBLISHED'", line)
                 ?? throw AppException.NotFound("Published menu item not found.");
             if (item.KitchenGuid != kitchen.Id)
                 throw AppException.Conflict("Cart can contain items from one kitchen only.", "CART_KITCHEN_MISMATCH");
 
             await db.ExecuteAsync(
-                @"INSERT INTO ordCartItems (Id, CartId, MenuItemGuid, Name, UnitPrice, Quantity)
+                @"INSERT INTO tblCartItems (Id, CartId, MenuItemGuid, Name, UnitPrice, Quantity)
                   VALUES (@Id, @CartId, @MenuItemGuid, @Name, @UnitPrice, @Quantity)",
                 new
                 {
@@ -83,7 +83,7 @@ public class OrderingService : IOrderingService
                 });
         }
 
-        await db.ExecuteAsync("UPDATE ordCarts SET KitchenGuid=@Id, UpdatedAt=SYSUTCDATETIME() WHERE Id=@CartId",
+        await db.ExecuteAsync("UPDATE tblCarts SET KitchenGuid=@Id, UpdatedAt=SYSUTCDATETIME() WHERE Id=@CartId",
             new { kitchen.Id, CartId = cart.Id });
         cart.KitchenGuid = kitchen.Id;
         return await LoadCart(db, cart, userId, cancellationToken);
@@ -98,23 +98,23 @@ public class OrderingService : IOrderingService
         if (!string.IsNullOrWhiteSpace(idempotencyKey))
         {
             var existingId = await db.ExecuteScalarAsync<string?>(
-                "SELECT OrderId FROM ordOrders WHERE IdempotencyKey=@idempotencyKey AND CustomerUserId=@userId",
+                "SELECT OrderId FROM tblOrders WHERE IdempotencyKey=@idempotencyKey AND CustomerUserId=@userId",
                 new { idempotencyKey, userId });
             if (existingId is not null)
                 return await LoadOrder(db, existingId);
         }
 
         var cart = await GetOrCreateCart(db, userId);
-        var items = (await db.QueryAsync<CartItem>("SELECT * FROM ordCartItems WHERE CartId=@Id", new { cart.Id })).ToList();
+        var items = (await db.QueryAsync<CartItem>("SELECT * FROM tblCartItems WHERE CartId=@Id", new { cart.Id })).ToList();
         if (items.Count == 0 || cart.KitchenGuid is null)
             throw AppException.Validation("Cart is empty.");
 
-        var kitchen = await db.QuerySingleAsync<Domain.Kitchen.Kitchen>("SELECT * FROM kitKitchens WHERE Id=@KitchenGuid", new { cart.KitchenGuid });
+        var kitchen = await db.QuerySingleAsync<Domain.Kitchen.Kitchen>("SELECT * FROM tblKitchens WHERE Id=@KitchenGuid", new { cart.KitchenGuid });
         if (kitchen.Status != KitchenStatuses.Active)
             throw AppException.Unprocessable("Kitchen is closed.", "KITCHEN_CLOSED");
 
         var address = await db.QuerySingleOrDefaultAsync<Domain.Customer.CustomerAddress>(
-            "SELECT * FROM cusAddresses WHERE AddressId=@AddressId AND UserId=@userId",
+            "SELECT * FROM tblAddresses WHERE AddressId=@AddressId AND UserId=@userId",
             new { request.AddressId, userId }) ?? throw AppException.NotFound("Delivery address not found.");
 
         if (kitchen.Latitude is not null && kitchen.Longitude is not null)
@@ -155,7 +155,7 @@ public class OrderingService : IOrderingService
         };
 
         await db.ExecuteAsync(
-            @"INSERT INTO ordOrders
+            @"INSERT INTO tblOrders
                 (Id, OrderId, CustomerUserId, KitchenGuid, KitchenPublicId, AddressGuid, DeliveryAddress,
                  ItemTotal, DiscountAmount, DeliveryFee, TaxAmount, TipAmount, GrandTotal, PaymentMethod,
                  Status, DeliveryMode, Instructions, IdempotencyKey, CreatedAt, UpdatedAt, AcceptedDeadlineAt)
@@ -168,7 +168,7 @@ public class OrderingService : IOrderingService
         foreach (var item in items)
         {
             await db.ExecuteAsync(
-                @"INSERT INTO ordOrderItems (Id, OrderGuid, MenuItemGuid, Name, UnitPrice, Quantity, LineTotal)
+                @"INSERT INTO tblOrderItems (Id, OrderGuid, MenuItemGuid, Name, UnitPrice, Quantity, LineTotal)
                   VALUES (@Id, @OrderGuid, @MenuItemGuid, @Name, @UnitPrice, @Quantity, @LineTotal)",
                 new
                 {
@@ -183,8 +183,8 @@ public class OrderingService : IOrderingService
         }
 
         await History(db, order.Id, order.Status, "Order created");
-        await db.ExecuteAsync("DELETE FROM ordCartItems WHERE CartId=@Id", new { cart.Id });
-        await db.ExecuteAsync("UPDATE ordCarts SET KitchenGuid=NULL WHERE Id=@Id", new { cart.Id });
+        await db.ExecuteAsync("DELETE FROM tblCartItems WHERE CartId=@Id", new { cart.Id });
+        await db.ExecuteAsync("UPDATE tblCarts SET KitchenGuid=NULL WHERE Id=@Id", new { cart.Id });
         return await LoadOrder(db, order.OrderId);
     }
 
@@ -193,11 +193,11 @@ public class OrderingService : IOrderingService
         using var db = _connections.Create();
         var ids = role == Roles.KitchenOwner
             ? await db.QueryAsync<string>(
-                @"SELECT o.OrderId FROM ordOrders o
-                  INNER JOIN kitKitchens k ON k.Id=o.KitchenGuid
+                @"SELECT o.OrderId FROM tblOrders o
+                  INNER JOIN tblKitchens k ON k.Id=o.KitchenGuid
                   WHERE k.OwnerUserId=@userId ORDER BY o.CreatedAt DESC", new { userId })
             : await db.QueryAsync<string>(
-                "SELECT OrderId FROM ordOrders WHERE CustomerUserId=@userId ORDER BY CreatedAt DESC", new { userId });
+                "SELECT OrderId FROM tblOrders WHERE CustomerUserId=@userId ORDER BY CreatedAt DESC", new { userId });
 
         var list = new List<OrderDto>();
         foreach (var id in ids)
@@ -214,7 +214,7 @@ public class OrderingService : IOrderingService
         if (role == Roles.KitchenOwner)
         {
             var owner = await db.ExecuteScalarAsync<Guid>(
-                "SELECT k.OwnerUserId FROM ordOrders o INNER JOIN kitKitchens k ON k.Id=o.KitchenGuid WHERE o.OrderId=@orderId",
+                "SELECT k.OwnerUserId FROM tblOrders o INNER JOIN tblKitchens k ON k.Id=o.KitchenGuid WHERE o.OrderId=@orderId",
                 new { orderId });
             if (owner == userId) return order;
         }
@@ -240,8 +240,8 @@ public class OrderingService : IOrderingService
         using var db = _connections.Create();
         await KitchenService.RequireOwned(db, kitchenId, ownerUserId);
         var ids = await db.QueryAsync<string>(
-            @"SELECT o.OrderId FROM ordOrders o
-              INNER JOIN kitKitchens k ON k.Id=o.KitchenGuid
+            @"SELECT o.OrderId FROM tblOrders o
+              INNER JOIN tblKitchens k ON k.Id=o.KitchenGuid
               WHERE k.KitchenId=@kitchenId ORDER BY o.CreatedAt DESC", new { kitchenId });
         var list = new List<OrderDto>();
         foreach (var id in ids)
@@ -266,7 +266,7 @@ public class OrderingService : IOrderingService
         var next = order.PaymentMethod == PaymentMethods.Cod ? OrderStatuses.Rejected : OrderStatuses.Refunded;
         await SetStatus(db, order.Id, next, "Kitchen rejected");
         if (next == OrderStatuses.Refunded)
-            await db.ExecuteAsync("UPDATE payPayments SET Status='REFUNDED', UpdatedAt=SYSUTCDATETIME() WHERE OrderGuid=@Id", new { order.Id });
+            await db.ExecuteAsync("UPDATE tblPayments SET Status='REFUNDED', UpdatedAt=SYSUTCDATETIME() WHERE OrderGuid=@Id", new { order.Id });
         return await LoadOrder(db, orderId);
     }
 
@@ -304,12 +304,12 @@ public class OrderingService : IOrderingService
         if (order.Status != OrderStatuses.Delivered)
             throw AppException.Validation("Rating is allowed only after delivery.");
 
-        var exists = await db.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM revReviews WHERE OrderGuid=@Id", new { order.Id });
+        var exists = await db.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM tblReviews WHERE OrderGuid=@Id", new { order.Id });
         if (exists > 0)
             throw AppException.Conflict("Order already reviewed.", "REVIEW_EXISTS");
 
         await db.ExecuteAsync(
-            @"INSERT INTO revReviews (Id, OrderGuid, KitchenGuid, CustomerUserId, Rating, RiderRating, Comments, CreatedAt)
+            @"INSERT INTO tblReviews (Id, OrderGuid, KitchenGuid, CustomerUserId, Rating, RiderRating, Comments, CreatedAt)
               VALUES (@Id, @OrderGuid, @KitchenGuid, @CustomerUserId, @Rating, @RiderRating, @Comments, SYSUTCDATETIME())",
             new
             {
@@ -325,39 +325,39 @@ public class OrderingService : IOrderingService
 
     internal static async Task SetStatus(System.Data.IDbConnection db, Guid orderGuid, string status, string remarks)
     {
-        await db.ExecuteAsync("UPDATE ordOrders SET Status=@status, UpdatedAt=SYSUTCDATETIME() WHERE Id=@orderGuid", new { orderGuid, status });
+        await db.ExecuteAsync("UPDATE tblOrders SET Status=@status, UpdatedAt=SYSUTCDATETIME() WHERE Id=@orderGuid", new { orderGuid, status });
         await History(db, orderGuid, status, remarks);
     }
 
     internal static async Task MarkPlaced(System.Data.IDbConnection db, Guid orderGuid, int acceptMinutes)
     {
         await db.ExecuteAsync(
-            "UPDATE ordOrders SET Status=@status, AcceptedDeadlineAt=DATEADD(MINUTE,@acceptMinutes,SYSUTCDATETIME()), UpdatedAt=SYSUTCDATETIME() WHERE Id=@orderGuid",
+            "UPDATE tblOrders SET Status=@status, AcceptedDeadlineAt=DATEADD(MINUTE,@acceptMinutes,SYSUTCDATETIME()), UpdatedAt=SYSUTCDATETIME() WHERE Id=@orderGuid",
             new { orderGuid, status = OrderStatuses.Placed, acceptMinutes });
         await History(db, orderGuid, OrderStatuses.Placed, "Payment successful");
     }
 
     private static async Task History(System.Data.IDbConnection db, Guid orderGuid, string status, string remarks) =>
         await db.ExecuteAsync(
-            "INSERT INTO ordOrderStatusHistory (OrderGuid, Status, Remarks, CreatedAt) VALUES (@orderGuid, @status, @remarks, SYSUTCDATETIME())",
+            "INSERT INTO tblOrderStatusHistory (OrderGuid, Status, Remarks, CreatedAt) VALUES (@orderGuid, @status, @remarks, SYSUTCDATETIME())",
             new { orderGuid, status, remarks });
 
     private static async Task<Cart> GetOrCreateCart(System.Data.IDbConnection db, Guid userId)
     {
-        var cart = await db.QuerySingleOrDefaultAsync<Cart>("SELECT * FROM ordCarts WHERE UserId=@userId", new { userId });
+        var cart = await db.QuerySingleOrDefaultAsync<Cart>("SELECT * FROM tblCarts WHERE UserId=@userId", new { userId });
         if (cart is not null) return cart;
         cart = new Cart { Id = Guid.NewGuid(), UserId = userId, UpdatedAt = DateTime.UtcNow };
-        await db.ExecuteAsync("INSERT INTO ordCarts (Id, UserId, UpdatedAt) VALUES (@Id, @UserId, @UpdatedAt)", cart);
+        await db.ExecuteAsync("INSERT INTO tblCarts (Id, UserId, UpdatedAt) VALUES (@Id, @UserId, @UpdatedAt)", cart);
         return cart;
     }
 
     private async Task<CartDto> LoadCart(System.Data.IDbConnection db, Cart cart, Guid userId, CancellationToken cancellationToken)
     {
-        var items = (await db.QueryAsync<CartItem>("SELECT * FROM ordCartItems WHERE CartId=@Id", new { cart.Id })).ToList();
+        var items = (await db.QueryAsync<CartItem>("SELECT * FROM tblCartItems WHERE CartId=@Id", new { cart.Id })).ToList();
         var itemIds = items.Select(i => i.MenuItemGuid).ToList();
         var publicIds = itemIds.Count == 0
             ? new Dictionary<Guid, string>()
-            : (await db.QueryAsync<(Guid Id, string ItemId)>("SELECT Id, ItemId FROM catMenuItems WHERE Id IN @ids", new { ids = itemIds }))
+            : (await db.QueryAsync<(Guid Id, string ItemId)>("SELECT Id, ItemId FROM tblMenuItems WHERE Id IN @ids", new { ids = itemIds }))
                 .ToDictionary(x => x.Id, x => x.ItemId);
 
         var lines = items.Select(x => new CartItemDto
@@ -374,7 +374,7 @@ public class OrderingService : IOrderingService
         var delivery = plus && itemTotal >= _commerce.HomelyPlusFreeDeliveryMin ? 0 : _commerce.DeliveryFee;
         var kitchenId = cart.KitchenGuid is null
             ? null
-            : await db.ExecuteScalarAsync<string>("SELECT KitchenId FROM kitKitchens WHERE Id=@KitchenGuid", new { cart.KitchenGuid });
+            : await db.ExecuteScalarAsync<string>("SELECT KitchenId FROM tblKitchens WHERE Id=@KitchenGuid", new { cart.KitchenGuid });
 
         return new CartDto
         {
@@ -389,7 +389,7 @@ public class OrderingService : IOrderingService
     }
 
     internal static async Task<Order> RequireOrder(System.Data.IDbConnection db, string orderId) =>
-        await db.QuerySingleOrDefaultAsync<Order>("SELECT * FROM ordOrders WHERE OrderId=@orderId", new { orderId })
+        await db.QuerySingleOrDefaultAsync<Order>("SELECT * FROM tblOrders WHERE OrderId=@orderId", new { orderId })
         ?? throw AppException.NotFound("Order not found.");
 
     private static async Task<Order> RequireKitchenOrder(System.Data.IDbConnection db, string kitchenId, string orderId, Guid ownerUserId)
@@ -397,7 +397,7 @@ public class OrderingService : IOrderingService
         await KitchenService.RequireOwned(db, kitchenId, ownerUserId);
         var order = await RequireOrder(db, orderId);
         var matches = await db.ExecuteScalarAsync<int>(
-            "SELECT COUNT(1) FROM kitKitchens WHERE Id=@KitchenGuid AND KitchenId=@kitchenId",
+            "SELECT COUNT(1) FROM tblKitchens WHERE Id=@KitchenGuid AND KitchenId=@kitchenId",
             new { order.KitchenGuid, kitchenId });
         if (matches == 0)
             throw AppException.Forbidden();
@@ -407,11 +407,11 @@ public class OrderingService : IOrderingService
     internal static async Task<OrderDto> LoadOrder(System.Data.IDbConnection db, string orderId)
     {
         var order = await RequireOrder(db, orderId);
-        var items = await db.QueryAsync<OrderItem>("SELECT * FROM ordOrderItems WHERE OrderGuid=@Id", new { order.Id });
+        var items = await db.QueryAsync<OrderItem>("SELECT * FROM tblOrderItems WHERE OrderGuid=@Id", new { order.Id });
         var timeline = (await db.QueryAsync<string>(
-            "SELECT Status FROM ordOrderStatusHistory WHERE OrderGuid=@Id ORDER BY CreatedAt", new { order.Id })).ToList();
+            "SELECT Status FROM tblOrderStatusHistory WHERE OrderGuid=@Id ORDER BY CreatedAt", new { order.Id })).ToList();
         var tracking = await db.QuerySingleOrDefaultAsync<(decimal? Latitude, decimal? Longitude)?>(
-            "SELECT Latitude, Longitude FROM delDeliveries WHERE OrderGuid=@Id", new { order.Id });
+            "SELECT Latitude, Longitude FROM tblDeliveries WHERE OrderGuid=@Id", new { order.Id });
 
         return new OrderDto
         {
@@ -441,8 +441,8 @@ public class OrderingService : IOrderingService
     }
 
     private static async Task<bool> IsCustomer(System.Data.IDbConnection db, string orderId, Guid userId) =>
-        await db.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM ordOrders WHERE OrderId=@orderId AND CustomerUserId=@userId", new { orderId, userId }) > 0;
+        await db.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM tblOrders WHERE OrderId=@orderId AND CustomerUserId=@userId", new { orderId, userId }) > 0;
 
     private static async Task<string?> OwnerKitchen(System.Data.IDbConnection db, Guid userId) =>
-        await db.ExecuteScalarAsync<string?>("SELECT KitchenId FROM kitKitchens WHERE OwnerUserId=@userId", new { userId });
+        await db.ExecuteScalarAsync<string?>("SELECT KitchenId FROM tblKitchens WHERE OwnerUserId=@userId", new { userId });
 }

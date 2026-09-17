@@ -75,7 +75,7 @@ public class RiderService : IRiderService
             UpdatedAt = DateTime.UtcNow
         };
         await db.ExecuteAsync(
-            @"INSERT INTO delRiders
+            @"INSERT INTO tblRiders
                 (Id, RiderId, UserId, FullName, MobileNumber, VehicleType, Status, AccountHolderName, AccountNumber, IfscCode, CreatedAt, UpdatedAt)
               VALUES
                 (@Id, @RiderId, @UserId, @FullName, @MobileNumber, @VehicleType, @Status, @AccountHolderName, @AccountNumber, @IfscCode, @CreatedAt, @UpdatedAt)",
@@ -95,7 +95,7 @@ public class RiderService : IRiderService
         using var db = _connections.Create();
         var rider = await RequireByUser(db, userId);
         await db.ExecuteAsync(
-            "INSERT INTO delRiderDocuments (Id, RiderGuid, DocumentType, FileUrl, CreatedAt) VALUES (@Id, @RiderGuid, @DocumentType, @FileUrl, SYSUTCDATETIME())",
+            "INSERT INTO tblRiderDocuments (Id, RiderGuid, DocumentType, FileUrl, CreatedAt) VALUES (@Id, @RiderGuid, @DocumentType, @FileUrl, SYSUTCDATETIME())",
             new { Id = Guid.NewGuid(), RiderGuid = rider.Id, DocumentType = documentType, FileUrl = fileUrl });
     }
 
@@ -103,14 +103,14 @@ public class RiderService : IRiderService
     {
         using var db = _connections.Create();
         var rider = await RequireByUser(db, userId);
-        var types = (await db.QueryAsync<string>("SELECT DocumentType FROM delRiderDocuments WHERE RiderGuid=@Id", new { rider.Id }))
+        var types = (await db.QueryAsync<string>("SELECT DocumentType FROM tblRiderDocuments WHERE RiderGuid=@Id", new { rider.Id }))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         string[] required = [DocumentTypes.Aadhaar, DocumentTypes.DrivingLicence, DocumentTypes.VehicleRc, DocumentTypes.Selfie];
         if (required.Any(x => !types.Contains(x)) || string.IsNullOrWhiteSpace(rider.AccountNumber))
             throw AppException.Unprocessable("Aadhaar, DL, RC, selfie, and bank details are required.", "REGISTRATION_INCOMPLETE");
 
-        await db.ExecuteAsync("UPDATE delRiders SET Status=@status, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id",
+        await db.ExecuteAsync("UPDATE tblRiders SET Status=@status, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id",
             new { rider.Id, status = RiderStatuses.Submitted });
     }
 
@@ -122,7 +122,7 @@ public class RiderService : IRiderService
             throw AppException.Forbidden("Rider must be approved before going online.");
 
         await db.ExecuteAsync(
-            "UPDATE delRiders SET Available=@Available, Latitude=@Latitude, Longitude=@Longitude, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id",
+            "UPDATE tblRiders SET Available=@Available, Latitude=@Latitude, Longitude=@Longitude, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id",
             new { rider.Id, request.Available, request.Latitude, request.Longitude });
     }
 
@@ -131,7 +131,7 @@ public class RiderService : IRiderService
         using var db = _connections.Create();
         var rider = await RequireByUser(db, userId);
         var row = await db.QuerySingleOrDefaultAsync<RiderAssignment>(
-            @"SELECT TOP 1 * FROM delAssignments
+            @"SELECT TOP 1 * FROM tblAssignments
               WHERE RiderGuid=@Id AND Status='OFFERED' AND ExpiresAt > SYSUTCDATETIME()
               ORDER BY CreatedAt DESC", new { rider.Id });
         return row is null ? null : await MapAssignment(db, row, revealAddress: false);
@@ -142,32 +142,32 @@ public class RiderService : IRiderService
         using var db = _connections.Create();
         var rider = await RequireByUser(db, userId);
         var assignment = await db.QuerySingleOrDefaultAsync<RiderAssignment>(
-            "SELECT * FROM delAssignments WHERE AssignmentId=@assignmentId AND RiderGuid=@Id",
+            "SELECT * FROM tblAssignments WHERE AssignmentId=@assignmentId AND RiderGuid=@Id",
             new { assignmentId, rider.Id }) ?? throw AppException.NotFound("Assignment not found.");
 
         if (assignment.ExpiresAt < DateTime.UtcNow)
             throw AppException.Unprocessable("Offer expired.", "NO_RIDER_AVAILABLE");
 
         var busy = await db.ExecuteScalarAsync<int>(
-            "SELECT COUNT(1) FROM delDeliveries WHERE RiderGuid=@Id AND Status IN ('ASSIGNED','ARRIVED_KITCHEN','PICKED_UP')",
+            "SELECT COUNT(1) FROM tblDeliveries WHERE RiderGuid=@Id AND Status IN ('ASSIGNED','ARRIVED_KITCHEN','PICKED_UP')",
             new { rider.Id });
         if (busy > 0 && request.Decision.Equals("ACCEPT", StringComparison.OrdinalIgnoreCase))
             throw AppException.Conflict("Rider is already on a trip.", "RIDER_BUSY");
 
         var decision = request.Decision.Equals("ACCEPT", StringComparison.OrdinalIgnoreCase) ? AssignmentStatuses.Accepted : AssignmentStatuses.Declined;
-        await db.ExecuteAsync("UPDATE delAssignments SET Status=@decision WHERE Id=@Id", new { assignment.Id, decision });
+        await db.ExecuteAsync("UPDATE tblAssignments SET Status=@decision WHERE Id=@Id", new { assignment.Id, decision });
 
         if (decision == AssignmentStatuses.Accepted)
         {
             await db.ExecuteAsync(
-                @"INSERT INTO delDeliveries (Id, OrderGuid, RiderGuid, DeliveryMode, Status, CreatedAt, UpdatedAt)
+                @"INSERT INTO tblDeliveries (Id, OrderGuid, RiderGuid, DeliveryMode, Status, CreatedAt, UpdatedAt)
                   VALUES (@Id, @OrderGuid, @RiderGuid, 'RIDER', 'ASSIGNED', SYSUTCDATETIME(), SYSUTCDATETIME())",
                 new { Id = Guid.NewGuid(), assignment.OrderGuid, RiderGuid = rider.Id });
             return await MapAssignment(db, assignment, revealAddress: true);
         }
 
         var declines = await db.ExecuteScalarAsync<int>(
-            "SELECT COUNT(1) FROM delAssignments WHERE OrderGuid=@OrderGuid AND Status='DECLINED'",
+            "SELECT COUNT(1) FROM tblAssignments WHERE OrderGuid=@OrderGuid AND Status='DECLINED'",
             new { assignment.OrderGuid });
         if (declines >= _commerce.MaxRiderOffers)
             await FallbackKitchenSelf(db, assignment.OrderGuid);
@@ -184,10 +184,10 @@ public class RiderService : IRiderService
         var rider = await RequireByUser(db, userId);
         var order = await OrderingService.RequireOrder(db, orderId);
         var job = await db.QuerySingleOrDefaultAsync<DeliveryJob>(
-            "SELECT * FROM delDeliveries WHERE OrderGuid=@Id AND RiderGuid=@RiderId",
+            "SELECT * FROM tblDeliveries WHERE OrderGuid=@Id AND RiderGuid=@RiderId",
             new { order.Id, RiderId = rider.Id }) ?? throw AppException.NotFound("Trip not found.");
 
-        await db.ExecuteAsync("UPDATE delDeliveries SET Status=@status, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id", new { job.Id, status });
+        await db.ExecuteAsync("UPDATE tblDeliveries SET Status=@status, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id", new { job.Id, status });
         if (status == TripStatuses.PickedUp)
             await OrderingService.SetStatus(db, order.Id, OrderStatuses.OutForDelivery, "Rider picked up");
         if (status == TripStatuses.Delivered)
@@ -203,17 +203,17 @@ public class RiderService : IRiderService
         var rider = await RequireByUser(db, userId);
         var order = await OrderingService.RequireOrder(db, orderId);
         await db.ExecuteAsync(
-            "UPDATE delDeliveries SET Latitude=@Latitude, Longitude=@Longitude, UpdatedAt=SYSUTCDATETIME() WHERE OrderGuid=@Id AND RiderGuid=@RiderId",
+            "UPDATE tblDeliveries SET Latitude=@Latitude, Longitude=@Longitude, UpdatedAt=SYSUTCDATETIME() WHERE OrderGuid=@Id AND RiderGuid=@RiderId",
             new { order.Id, RiderId = rider.Id, request.Latitude, request.Longitude });
     }
 
     public async Task ReviewAsync(string riderId, RiderReviewRequest request, CancellationToken cancellationToken = default)
     {
         using var db = _connections.Create();
-        var rider = await db.QuerySingleOrDefaultAsync<Rider>("SELECT * FROM delRiders WHERE RiderId=@riderId", new { riderId })
+        var rider = await db.QuerySingleOrDefaultAsync<Rider>("SELECT * FROM tblRiders WHERE RiderId=@riderId", new { riderId })
                     ?? throw AppException.NotFound("Rider not found.");
         var status = request.Decision.Equals("APPROVE", StringComparison.OrdinalIgnoreCase) ? RiderStatuses.Approved : RiderStatuses.Rejected;
-        await db.ExecuteAsync("UPDATE delRiders SET Status=@status, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id", new { rider.Id, status });
+        await db.ExecuteAsync("UPDATE tblRiders SET Status=@status, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id", new { rider.Id, status });
     }
 
     public async Task StartAssignmentForReadyOrderAsync(Guid orderGuid, CancellationToken cancellationToken = default)
@@ -221,7 +221,7 @@ public class RiderService : IRiderService
         using var db = _connections.Create();
         var kitchen = await db.QuerySingleAsync<(decimal? Latitude, decimal? Longitude)>(
             @"SELECT k.Latitude, k.Longitude
-              FROM ordOrders o INNER JOIN kitKitchens k ON k.Id=o.KitchenGuid
+              FROM tblOrders o INNER JOIN tblKitchens k ON k.Id=o.KitchenGuid
               WHERE o.Id=@orderGuid", new { orderGuid });
 
         if (kitchen.Latitude is null || kitchen.Longitude is null)
@@ -231,7 +231,7 @@ public class RiderService : IRiderService
         }
 
         var riders = (await db.QueryAsync<Rider>(
-            "SELECT * FROM delRiders WHERE Status='APPROVED' AND Available=1 AND Latitude IS NOT NULL")).ToList();
+            "SELECT * FROM tblRiders WHERE Status='APPROVED' AND Available=1 AND Latitude IS NOT NULL")).ToList();
 
         var nearest = riders
             .Select(r => new { Rider = r, Distance = _geo.DistanceKm((double)kitchen.Latitude.Value, (double)kitchen.Longitude.Value, (double)r.Latitude!, (double)r.Longitude!) })
@@ -249,7 +249,7 @@ public class RiderService : IRiderService
         foreach (var item in nearest)
         {
             await db.ExecuteAsync(
-                @"INSERT INTO delAssignments (Id, AssignmentId, OrderGuid, RiderGuid, Status, ExpiresAt, CreatedAt)
+                @"INSERT INTO tblAssignments (Id, AssignmentId, OrderGuid, RiderGuid, Status, ExpiresAt, CreatedAt)
                   VALUES (@Id, @AssignmentId, @OrderGuid, @RiderGuid, 'OFFERED', DATEADD(SECOND, @ttl, SYSUTCDATETIME()), SYSUTCDATETIME())",
                 new
                 {
@@ -264,23 +264,23 @@ public class RiderService : IRiderService
 
     private async Task FallbackKitchenSelf(System.Data.IDbConnection db, Guid orderGuid)
     {
-        await db.ExecuteAsync("UPDATE ordOrders SET DeliveryMode='KITCHEN_SELF', UpdatedAt=SYSUTCDATETIME() WHERE Id=@orderGuid", new { orderGuid });
+        await db.ExecuteAsync("UPDATE tblOrders SET DeliveryMode='KITCHEN_SELF', UpdatedAt=SYSUTCDATETIME() WHERE Id=@orderGuid", new { orderGuid });
         await db.ExecuteAsync(
-            @"IF NOT EXISTS (SELECT 1 FROM delDeliveries WHERE OrderGuid=@orderGuid)
-              INSERT INTO delDeliveries (Id, OrderGuid, DeliveryMode, Status, CreatedAt, UpdatedAt)
+            @"IF NOT EXISTS (SELECT 1 FROM tblDeliveries WHERE OrderGuid=@orderGuid)
+              INSERT INTO tblDeliveries (Id, OrderGuid, DeliveryMode, Status, CreatedAt, UpdatedAt)
               VALUES (NEWID(), @orderGuid, 'KITCHEN_SELF', 'ASSIGNED', SYSUTCDATETIME(), SYSUTCDATETIME())",
             new { orderGuid });
         await OrderingService.SetStatus(db, orderGuid, OrderStatuses.OutForDelivery, "No rider available; kitchen self-delivery.");
     }
 
     private static async Task<Rider> RequireByUser(System.Data.IDbConnection db, Guid userId) =>
-        await db.QuerySingleOrDefaultAsync<Rider>("SELECT * FROM delRiders WHERE UserId=@userId", new { userId })
+        await db.QuerySingleOrDefaultAsync<Rider>("SELECT * FROM tblRiders WHERE UserId=@userId", new { userId })
         ?? throw AppException.NotFound("Rider profile not found.");
 
     private static async Task<AssignmentDto> MapAssignment(System.Data.IDbConnection db, RiderAssignment assignment, bool revealAddress)
     {
         var order = await db.QuerySingleAsync<(string OrderId, string DeliveryAddress)>(
-            "SELECT OrderId, DeliveryAddress FROM ordOrders WHERE Id=@OrderGuid", new { assignment.OrderGuid });
+            "SELECT OrderId, DeliveryAddress FROM tblOrders WHERE Id=@OrderGuid", new { assignment.OrderGuid });
         return new AssignmentDto
         {
             AssignmentId = assignment.AssignmentId,

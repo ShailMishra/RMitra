@@ -1,3 +1,4 @@
+using System.Data;
 using Dapper;
 using RMitra.Application.Abstractions;
 using RMitra.Application.Catalog;
@@ -24,7 +25,7 @@ public class CatalogService : ICatalogService
     public async Task<IReadOnlyList<CuisineDto>> GetCuisinesAsync(CancellationToken cancellationToken = default)
     {
         using var db = _connections.Create();
-        var rows = await db.QueryAsync<Cuisine>("SELECT Code, Name, CAST(1 AS BIT) AS IsActive FROM mstCuisines ORDER BY Name");
+        var rows = await db.QueryAsync<Cuisine>("uspGetCuisines", commandType: CommandType.StoredProcedure);
         return rows.Select(x => new CuisineDto { Code = x.Code, Name = x.Name }).ToList();
     }
 
@@ -33,7 +34,7 @@ public class CatalogService : ICatalogService
         using var db = _connections.Create();
         var kitchen = await KitchenService.Require(db, kitchenId);
         var rows = await db.QueryAsync<MenuCategory>(
-            "SELECT * FROM catMenuCategories WHERE KitchenGuid=@Id AND IsActive=1 ORDER BY DisplayOrder, Name",
+            "SELECT * FROM tblMenuCategories WHERE KitchenGuid=@Id AND IsActive=1 ORDER BY DisplayOrder, Name",
             new { kitchen.Id });
         return rows.Select(Map).ToList();
     }
@@ -53,7 +54,7 @@ public class CatalogService : ICatalogService
             IsActive = true
         };
         await db.ExecuteAsync(
-            "INSERT INTO catMenuCategories (Id, KitchenGuid, Name, DisplayOrder, IsActive, CreatedAt) VALUES (@Id, @KitchenGuid, @Name, @DisplayOrder, 1, SYSUTCDATETIME())",
+            "INSERT INTO tblMenuCategories (Id, KitchenGuid, Name, DisplayOrder, IsActive, CreatedAt) VALUES (@Id, @KitchenGuid, @Name, @DisplayOrder, 1, SYSUTCDATETIME())",
             category);
         await MarkMenuSetup(db, kitchen);
         return Map(category);
@@ -80,7 +81,7 @@ public class CatalogService : ICatalogService
             UpdatedAt = DateTime.UtcNow
         };
         await db.ExecuteAsync(
-            @"INSERT INTO catMenuItems
+            @"INSERT INTO tblMenuItems
                 (Id, ItemId, KitchenGuid, CategoryId, Name, Description, Price, IsVeg, Status, PreparationMinutes, CreatedAt, UpdatedAt)
               VALUES
                 (@Id, @ItemId, @KitchenGuid, @CategoryId, @Name, @Description, @Price, @IsVeg, @Status, 20, @CreatedAt, @UpdatedAt)",
@@ -93,16 +94,16 @@ public class CatalogService : ICatalogService
     {
         using var db = _connections.Create();
         var kitchen = await KitchenService.Require(db, kitchenId);
-        var rows = await db.QueryAsync<MenuItem>("SELECT * FROM catMenuItems WHERE KitchenGuid=@Id AND Status<>'DELETED' ORDER BY Name", new { kitchen.Id });
+        var rows = await db.QueryAsync<MenuItem>("SELECT * FROM tblMenuItems WHERE KitchenGuid=@Id AND Status<>'DELETED' ORDER BY Name", new { kitchen.Id });
         return rows.Select(Map).ToList();
     }
 
     public async Task<MenuItemDto> PatchItemAsync(string itemId, Guid ownerUserId, PatchMenuItemRequest request, CancellationToken cancellationToken = default)
     {
         using var db = _connections.Create();
-        var item = await db.QuerySingleOrDefaultAsync<MenuItem>("SELECT * FROM catMenuItems WHERE ItemId=@itemId", new { itemId })
+        var item = await db.QuerySingleOrDefaultAsync<MenuItem>("SELECT * FROM tblMenuItems WHERE ItemId=@itemId", new { itemId })
                    ?? throw AppException.NotFound("Menu item not found.");
-        var kitchen = await db.QuerySingleAsync<Domain.Kitchen.Kitchen>("SELECT * FROM kitKitchens WHERE Id=@KitchenGuid", new { item.KitchenGuid });
+        var kitchen = await db.QuerySingleAsync<Domain.Kitchen.Kitchen>("SELECT * FROM tblKitchens WHERE Id=@KitchenGuid", new { item.KitchenGuid });
         if (kitchen.OwnerUserId != ownerUserId)
             throw AppException.Forbidden();
         await KitchenService.EnsureListingEnabled(db, kitchen.Id);
@@ -125,7 +126,7 @@ public class CatalogService : ICatalogService
         }
 
         await db.ExecuteAsync(
-            @"UPDATE catMenuItems
+            @"UPDATE tblMenuItems
               SET Name=@Name, Description=@Description, Price=@Price, IsVeg=@IsVeg, Status=@Status, UpdatedAt=SYSUTCDATETIME()
               WHERE ItemId=@ItemId",
             item);
@@ -135,14 +136,14 @@ public class CatalogService : ICatalogService
     public async Task AddPhotoAsync(string itemId, Guid ownerUserId, string fileUrl, CancellationToken cancellationToken = default)
     {
         using var db = _connections.Create();
-        var item = await db.QuerySingleOrDefaultAsync<MenuItem>("SELECT * FROM catMenuItems WHERE ItemId=@itemId", new { itemId })
+        var item = await db.QuerySingleOrDefaultAsync<MenuItem>("SELECT * FROM tblMenuItems WHERE ItemId=@itemId", new { itemId })
                    ?? throw AppException.NotFound("Menu item not found.");
-        var owner = await db.ExecuteScalarAsync<Guid>("SELECT OwnerUserId FROM kitKitchens WHERE Id=@KitchenGuid", new { item.KitchenGuid });
+        var owner = await db.ExecuteScalarAsync<Guid>("SELECT OwnerUserId FROM tblKitchens WHERE Id=@KitchenGuid", new { item.KitchenGuid });
         if (owner != ownerUserId)
             throw AppException.Forbidden();
 
         await db.ExecuteAsync(
-            "UPDATE catMenuItems SET PhotoUrl=@fileUrl, UpdatedAt=SYSUTCDATETIME() WHERE ItemId=@itemId",
+            "UPDATE tblMenuItems SET PhotoUrl=@fileUrl, UpdatedAt=SYSUTCDATETIME() WHERE ItemId=@itemId",
             new { itemId, fileUrl });
     }
 
@@ -168,7 +169,7 @@ public class CatalogService : ICatalogService
 
         var categories = await GetCategoriesAsync(kitchenId, cancellationToken);
         var items = (await db.QueryAsync<MenuItem>(
-            "SELECT * FROM catMenuItems WHERE KitchenGuid=@Id AND Status='PUBLISHED'", new { kitchen.Id })).Select(Map).ToList();
+            "SELECT * FROM tblMenuItems WHERE KitchenGuid=@Id AND Status='PUBLISHED'", new { kitchen.Id })).Select(Map).ToList();
 
         return new StorefrontDto
         {
@@ -187,7 +188,7 @@ public class CatalogService : ICatalogService
         if (kitchen.Status == KitchenStatuses.Approved)
         {
             await db.ExecuteAsync(
-                "UPDATE kitKitchens SET Status=@status, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id",
+                "UPDATE tblKitchens SET Status=@status, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id",
                 new { kitchen.Id, status = KitchenStatuses.MenuSetup });
         }
     }

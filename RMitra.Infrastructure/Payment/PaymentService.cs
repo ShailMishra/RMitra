@@ -34,7 +34,7 @@ public class PaymentService : IPaymentService
         if (order.Status is not OrderStatuses.PaymentPending and not OrderStatuses.PaymentFailed)
             throw AppException.Validation("Order is not awaiting payment.");
 
-        var attempts = await db.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM payPayments WHERE OrderGuid=@Id", new { order.Id });
+        var attempts = await db.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM tblPayments WHERE OrderGuid=@Id", new { order.Id });
         if (attempts >= 3)
             throw AppException.Validation("Maximum 3 payment retries reached.");
 
@@ -52,7 +52,7 @@ public class PaymentService : IPaymentService
             UpdatedAt = DateTime.UtcNow
         };
         await db.ExecuteAsync(
-            @"INSERT INTO payPayments (Id, PaymentId, OrderGuid, UserId, Amount, Method, Status, AttemptCount, CreatedAt, UpdatedAt)
+            @"INSERT INTO tblPayments (Id, PaymentId, OrderGuid, UserId, Amount, Method, Status, AttemptCount, CreatedAt, UpdatedAt)
               VALUES (@Id, @PaymentId, @OrderGuid, @UserId, @Amount, @Method, @Status, @AttemptCount, @CreatedAt, @UpdatedAt)",
             payment);
         return Map(payment, order.OrderId);
@@ -81,10 +81,10 @@ public class PaymentService : IPaymentService
     private async Task<PaymentDto> Succeed(System.Data.IDbConnection db, PaymentEntity payment, string? reference)
     {
         await db.ExecuteAsync(
-            "UPDATE payPayments SET Status=@status, GatewayReference=@reference, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id",
+            "UPDATE tblPayments SET Status=@status, GatewayReference=@reference, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id",
             new { payment.Id, status = PaymentStatuses.Success, reference });
         await OrderingService.MarkPlaced(db, payment.OrderGuid, _commerce.KitchenAcceptMinutes);
-        var orderId = await db.ExecuteScalarAsync<string>("SELECT OrderId FROM ordOrders WHERE Id=@OrderGuid", new { payment.OrderGuid });
+        var orderId = await db.ExecuteScalarAsync<string>("SELECT OrderId FROM tblOrders WHERE Id=@OrderGuid", new { payment.OrderGuid });
         payment.Status = PaymentStatuses.Success;
         payment.GatewayReference = reference;
         return Map(payment, orderId ?? string.Empty);
@@ -93,16 +93,16 @@ public class PaymentService : IPaymentService
     private static async Task<PaymentDto> Fail(System.Data.IDbConnection db, PaymentEntity payment, string reason)
     {
         await db.ExecuteAsync(
-            "UPDATE payPayments SET Status=@status, FailureReason=@reason, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id",
+            "UPDATE tblPayments SET Status=@status, FailureReason=@reason, UpdatedAt=SYSUTCDATETIME() WHERE Id=@Id",
             new { payment.Id, status = PaymentStatuses.Failed, reason });
         await OrderingService.SetStatus(db, payment.OrderGuid, OrderStatuses.PaymentFailed, reason);
-        var orderId = await db.ExecuteScalarAsync<string>("SELECT OrderId FROM ordOrders WHERE Id=@OrderGuid", new { payment.OrderGuid });
+        var orderId = await db.ExecuteScalarAsync<string>("SELECT OrderId FROM tblOrders WHERE Id=@OrderGuid", new { payment.OrderGuid });
         payment.Status = PaymentStatuses.Failed;
         return Map(payment, orderId ?? string.Empty);
     }
 
     private static async Task<PaymentEntity> Require(System.Data.IDbConnection db, string paymentId) =>
-        await db.QuerySingleOrDefaultAsync<PaymentEntity>("SELECT * FROM payPayments WHERE PaymentId=@paymentId", new { paymentId })
+        await db.QuerySingleOrDefaultAsync<PaymentEntity>("SELECT * FROM tblPayments WHERE PaymentId=@paymentId", new { paymentId })
         ?? throw AppException.NotFound("Payment not found.");
 
     private static PaymentDto Map(PaymentEntity payment, string orderId) => new()

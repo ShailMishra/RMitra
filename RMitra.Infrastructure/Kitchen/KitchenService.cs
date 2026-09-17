@@ -1,3 +1,4 @@
+using System.Data;
 using System.Text.Json;
 using Dapper;
 using RMitra.Application.Abstractions;
@@ -44,7 +45,7 @@ public class KitchenService : IKitchenService
             throw AppException.Forbidden("OTP purpose must be KITCHEN_OWNER.");
 
         var existing = await db.ExecuteScalarAsync<int>(
-            "SELECT COUNT(1) FROM kitKitchens WHERE MobileNumber = @mobile",
+            "SELECT COUNT(1) FROM tblKitchens WHERE MobileNumber = @mobile",
             new { mobile = otp.MobileNumber });
         if (existing > 0)
             throw AppException.Conflict("A kitchen already exists for this mobile.", "KITCHEN_ALREADY_EXISTS");
@@ -67,7 +68,7 @@ public class KitchenService : IKitchenService
         };
 
         await db.ExecuteAsync(
-            @"INSERT INTO kitKitchens
+            @"INSERT INTO tblKitchens
                 (Id, KitchenId, OwnerUserId, KitchenName, OwnerName, MobileNumber, Email, KitchenType,
                  Status, ListingEnabled, DeliveryRadiusKm, CreatedAt, UpdatedAt)
               VALUES
@@ -113,7 +114,7 @@ public class KitchenService : IKitchenService
         }
 
         await db.ExecuteAsync(
-            @"UPDATE kitKitchens SET
+            @"UPDATE tblKitchens SET
                 KitchenName=@KitchenName, OwnerName=@OwnerName, Email=@Email,
                 AddressLine1=@AddressLine1, AddressLine2=@AddressLine2, City=@City, State=@State, Pincode=@Pincode,
                 Latitude=@Latitude, Longitude=@Longitude, CuisineTypes=@CuisineTypes, OpenTime=@OpenTime, CloseTime=@CloseTime,
@@ -136,7 +137,7 @@ public class KitchenService : IKitchenService
         using var db = _connections.Create();
         var kitchen = await RequireOwned(db, kitchenId, ownerUserId);
         await db.ExecuteAsync(
-            @"INSERT INTO kitDocuments (Id, KitchenGuid, DocumentType, FileUrl, CreatedAt)
+            @"INSERT INTO tblKitchenDocuments (Id, KitchenGuid, DocumentType, FileUrl, CreatedAt)
               VALUES (@Id, @KitchenGuid, @DocumentType, @FileUrl, SYSUTCDATETIME())",
             new { Id = Guid.NewGuid(), KitchenGuid = kitchen.Id, DocumentType = documentType, FileUrl = fileUrl });
         return await LoadDocuments(db, kitchen.Id);
@@ -167,7 +168,7 @@ public class KitchenService : IKitchenService
             : KitchenStatuses.Submitted;
 
         await db.ExecuteAsync(
-            @"UPDATE kitKitchens
+            @"UPDATE tblKitchens
               SET Status=@status, SubmittedAt=SYSUTCDATETIME(), UpdatedAt=SYSUTCDATETIME(),
                   RejectionReason=NULL, AdditionalDocumentsRequired=NULL
               WHERE KitchenId=@kitchenId",
@@ -178,7 +179,7 @@ public class KitchenService : IKitchenService
         if (next == KitchenStatuses.Submitted)
         {
             await db.ExecuteAsync(
-                "UPDATE kitKitchens SET Status=@pending WHERE KitchenId=@kitchenId",
+                "UPDATE tblKitchens SET Status=@pending WHERE KitchenId=@kitchenId",
                 new { kitchenId, pending = KitchenStatuses.DocumentVerificationPending });
             await History(db, kitchen.Id, KitchenStatuses.DocumentVerificationPending, "Queued for document checks");
         }
@@ -214,13 +215,13 @@ public class KitchenService : IKitchenService
             throw AppException.Unprocessable("Kitchen must be approved before activate.", "REGISTRATION_INCOMPLETE");
 
         var published = await db.ExecuteScalarAsync<int>(
-            "SELECT COUNT(1) FROM catMenuItems WHERE KitchenGuid=@Id AND Status='PUBLISHED'",
+            "SELECT COUNT(1) FROM tblMenuItems WHERE KitchenGuid=@Id AND Status='PUBLISHED'",
             new { kitchen.Id });
         if (published == 0)
             throw AppException.Unprocessable("Publish at least one menu item before activate.", "MENU_REQUIRED");
 
         await db.ExecuteAsync(
-            "UPDATE kitKitchens SET Status=@status, ActivatedAt=SYSUTCDATETIME(), UpdatedAt=SYSUTCDATETIME() WHERE KitchenId=@kitchenId",
+            "UPDATE tblKitchens SET Status=@status, ActivatedAt=SYSUTCDATETIME(), UpdatedAt=SYSUTCDATETIME() WHERE KitchenId=@kitchenId",
             new { kitchenId, status = KitchenStatuses.Active });
         await History(db, kitchen.Id, KitchenStatuses.Active, "Kitchen activated");
         return Map(await Require(db, kitchenId));
@@ -234,7 +235,7 @@ public class KitchenService : IKitchenService
             @"SELECT
                 COUNT(1) AS TodayOrders,
                 ISNULL(SUM(CASE WHEN Status='DELIVERED' THEN ItemTotal ELSE 0 END),0) AS TodayEarnings
-              FROM ordOrders
+              FROM tblOrders
               WHERE KitchenGuid=@Id AND CAST(CreatedAt AS DATE) = CAST(SYSUTCDATETIME() AS DATE)",
             new { kitchen.Id });
 
@@ -251,9 +252,8 @@ public class KitchenService : IKitchenService
     {
         using var db = _connections.Create();
         var rows = await db.QueryAsync<KitchenEntity>(
-            @"SELECT * FROM kitKitchens
-              WHERE Status IN ('SUBMITTED','DOCUMENT_VERIFICATION_PENDING','UNDER_REVIEW','ADDITIONAL_DOCUMENTS_REQUIRED','RESUBMITTED')
-              ORDER BY SubmittedAt DESC");
+            "uspGetPendingKitchens",
+            commandType: CommandType.StoredProcedure);
         return rows.Select(Map).ToList();
     }
 
@@ -262,7 +262,7 @@ public class KitchenService : IKitchenService
         using var db = _connections.Create();
         var kitchen = await Require(db, kitchenId);
         await db.ExecuteAsync(
-            @"UPDATE kitKitchens
+            @"UPDATE tblKitchens
               SET Status=@status, ListingEnabled=1, ApprovedAt=SYSUTCDATETIME(), UpdatedAt=SYSUTCDATETIME()
               WHERE KitchenId=@kitchenId",
             new { kitchenId, status = KitchenStatuses.Approved });
@@ -275,7 +275,7 @@ public class KitchenService : IKitchenService
         using var db = _connections.Create();
         var kitchen = await Require(db, kitchenId);
         await db.ExecuteAsync(
-            "UPDATE kitKitchens SET Status=@status, RejectionReason=@Reason, ListingEnabled=0, UpdatedAt=SYSUTCDATETIME() WHERE KitchenId=@kitchenId",
+            "UPDATE tblKitchens SET Status=@status, RejectionReason=@Reason, ListingEnabled=0, UpdatedAt=SYSUTCDATETIME() WHERE KitchenId=@kitchenId",
             new { kitchenId, status = KitchenStatuses.Rejected, request.Reason });
         await History(db, kitchen.Id, KitchenStatuses.Rejected, request.Reason);
         return Map(await Require(db, kitchenId));
@@ -286,7 +286,7 @@ public class KitchenService : IKitchenService
         using var db = _connections.Create();
         var kitchen = await Require(db, kitchenId);
         await db.ExecuteAsync(
-            "UPDATE kitKitchens SET Status=@status, AdditionalDocumentsRequired=@docs, UpdatedAt=SYSUTCDATETIME() WHERE KitchenId=@kitchenId",
+            "UPDATE tblKitchens SET Status=@status, AdditionalDocumentsRequired=@docs, UpdatedAt=SYSUTCDATETIME() WHERE KitchenId=@kitchenId",
             new { kitchenId, status = KitchenStatuses.AdditionalDocumentsRequired, docs = request.DocumentsRequired });
         await History(db, kitchen.Id, KitchenStatuses.AdditionalDocumentsRequired, request.DocumentsRequired);
         return Map(await Require(db, kitchenId));
@@ -296,9 +296,8 @@ public class KitchenService : IKitchenService
     {
         using var db = _connections.Create();
         var kitchens = (await db.QueryAsync<KitchenEntity>(
-            @"SELECT k.* FROM kitKitchens k
-              WHERE k.Status='ACTIVE' AND k.Latitude IS NOT NULL AND k.Longitude IS NOT NULL
-                AND EXISTS (SELECT 1 FROM catMenuItems i WHERE i.KitchenGuid=k.Id AND i.Status='PUBLISHED')")).ToList();
+            "uspGetNearby",
+            commandType: CommandType.StoredProcedure)).ToList();
 
         var result = new List<NearbyKitchenDto>();
         foreach (var kitchen in kitchens)
@@ -334,7 +333,10 @@ public class KitchenService : IKitchenService
     }
 
     internal static async Task<KitchenEntity> Require(System.Data.IDbConnection db, string kitchenId) =>
-        await db.QuerySingleOrDefaultAsync<KitchenEntity>("SELECT * FROM kitKitchens WHERE KitchenId=@kitchenId", new { kitchenId })
+        await db.QuerySingleOrDefaultAsync<KitchenEntity>(
+            "uspGetKitchen",
+            new { kitchenId },
+            commandType: CommandType.StoredProcedure)
         ?? throw AppException.NotFound("Kitchen not found.");
 
     internal static async Task<KitchenEntity> RequireOwned(System.Data.IDbConnection db, string kitchenId, Guid ownerUserId)
@@ -348,7 +350,7 @@ public class KitchenService : IKitchenService
     internal static async Task EnsureListingEnabled(System.Data.IDbConnection db, Guid kitchenGuid)
     {
         var enabled = await db.ExecuteScalarAsync<bool>(
-            "SELECT ListingEnabled FROM kitKitchens WHERE Id=@kitchenGuid", new { kitchenGuid });
+            "SELECT ListingEnabled FROM tblKitchens WHERE Id=@kitchenGuid", new { kitchenGuid });
         if (!enabled)
             throw AppException.ListingNotEnabled();
     }
@@ -356,7 +358,7 @@ public class KitchenService : IKitchenService
     private static async Task<KitchenDocumentsResponse> LoadDocuments(System.Data.IDbConnection db, Guid kitchenGuid)
     {
         var rows = (await db.QueryAsync<KitchenDocument>(
-            "SELECT * FROM kitDocuments WHERE KitchenGuid=@kitchenGuid", new { kitchenGuid })).ToList();
+            "SELECT * FROM tblKitchenDocuments WHERE KitchenGuid=@kitchenGuid", new { kitchenGuid })).ToList();
 
         var types = rows.Select(x => x.DocumentType).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var missing = new List<string>();
@@ -377,7 +379,7 @@ public class KitchenService : IKitchenService
 
     private static async Task History(System.Data.IDbConnection db, Guid kitchenGuid, string status, string remarks) =>
         await db.ExecuteAsync(
-            "INSERT INTO kitKitchenStatusHistory (KitchenGuid, Status, Remarks, CreatedAt) VALUES (@kitchenGuid, @status, @remarks, SYSUTCDATETIME())",
+            "INSERT INTO tblKitchenStatusHistory (KitchenGuid, Status, Remarks, CreatedAt) VALUES (@kitchenGuid, @status, @remarks, SYSUTCDATETIME())",
             new { kitchenGuid, status, remarks });
 
     private static bool IsAtLeast(string status, string target)

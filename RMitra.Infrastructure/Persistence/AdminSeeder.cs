@@ -1,3 +1,4 @@
+using System.Data;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -14,12 +15,13 @@ public static class AdminSeeder
             var password = configuration["Admin:Password"] ?? "Admin@123";
             using var db = connections.Create();
             await db.ExecuteAsync(
-                "UPDATE mstUsers SET PasswordHash=@hash, UpdatedAt=SYSUTCDATETIME() WHERE MobileNumber='9999999999' AND Role='ADMIN' AND PasswordHash IS NULL",
-                new { hash = hasher.Hash(password) });
+                "uspSeedAdminPassword",
+                new { PasswordHash = hasher.Hash(password) },
+                commandType: CommandType.StoredProcedure);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Admin password seed skipped. Create the HomelyFood database first.");
+            logger.LogWarning(ex, "Admin password seed skipped. Create the RasoiMitra database first.");
         }
     }
 }

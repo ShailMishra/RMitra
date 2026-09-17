@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>RM_Backend_API</RootNamespace>
+    <UserSecretsId>b7e2c8a1-9d4f-4a3b-8c21-7f6e5d4c3b2a</UserSecretsId>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>

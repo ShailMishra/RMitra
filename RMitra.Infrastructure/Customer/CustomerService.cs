@@ -1,3 +1,4 @@
+using System.Data;
 using Dapper;
 using RMitra.Application.Abstractions;
 using RMitra.Application.Customer;
@@ -54,7 +55,10 @@ public class CustomerService : ICustomerService
     public async Task<UserProfileDto> GetMeAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         using var db = _connections.Create();
-        var user = await db.QuerySingleOrDefaultAsync<Domain.Identity.User>("SELECT * FROM mstUsers WHERE Id=@userId", new { userId })
+        var user = await db.QuerySingleOrDefaultAsync<Domain.Identity.User>(
+            "uspGetMe",
+            new { UserId = userId },
+            commandType: CommandType.StoredProcedure)
                    ?? throw AppException.NotFound("Customer not found.");
         return UserProfileDto.From(user);
     }
@@ -63,15 +67,19 @@ public class CustomerService : ICustomerService
     {
         using var db = _connections.Create();
         await db.ExecuteAsync(
-            "UPDATE mstUsers SET FullName=COALESCE(@Name, FullName), Email=COALESCE(@Email, Email), UpdatedAt=SYSUTCDATETIME() WHERE Id=@userId",
-            new { userId, request.Name, request.Email });
+            "uspUpdateMe",
+            new { UserId = userId, request.Name, request.Email },
+            commandType: CommandType.StoredProcedure);
         return await GetMeAsync(userId, cancellationToken);
     }
 
     public async Task<IReadOnlyList<AddressDto>> GetAddressesAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         using var db = _connections.Create();
-        var rows = await db.QueryAsync<CustomerAddress>("SELECT * FROM cusAddresses WHERE UserId=@userId ORDER BY IsDefault DESC, CreatedAt DESC", new { userId });
+        var rows = await db.QueryAsync<CustomerAddress>(
+            "uspGetAddresses",
+            new { UserId = userId },
+            commandType: CommandType.StoredProcedure);
         return rows.Select(Map).ToList();
     }
 
@@ -81,9 +89,6 @@ public class CustomerService : ICustomerService
             throw AppException.Validation("latitude and longitude are required.");
 
         using var db = _connections.Create();
-        if (request.IsDefault)
-            await db.ExecuteAsync("UPDATE cusAddresses SET IsDefault=0 WHERE UserId=@userId", new { userId });
-
         var address = new CustomerAddress
         {
             Id = Guid.NewGuid(),
@@ -100,12 +105,7 @@ public class CustomerService : ICustomerService
             IsDefault = request.IsDefault,
             CreatedAt = DateTime.UtcNow
         };
-        await db.ExecuteAsync(
-            @"INSERT INTO cusAddresses
-                (Id, AddressId, UserId, Label, Line1, Line2, City, State, Pincode, Latitude, Longitude, IsDefault, CreatedAt)
-              VALUES
-                (@Id, @AddressId, @UserId, @Label, @Line1, @Line2, @City, @State, @Pincode, @Latitude, @Longitude, @IsDefault, @CreatedAt)",
-            address);
+        await db.ExecuteAsync("uspAddAddress", address, commandType: CommandType.StoredProcedure);
         return Map(address);
     }
 
