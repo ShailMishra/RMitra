@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
+using RM.Infrastructure.CommonClass;
 using RMitra.Api.Common;
 using RMitra.Api.Response;
 using static RMitra.Api.Common.StatusMessage;
@@ -10,13 +11,11 @@ namespace RMitra.Api.ActionFilters;
 
 public class CustomAuthenticationFilter : Attribute, IAuthorizationFilter
 {
-    private readonly string _apiKey;
-    private readonly string _secretKey;
+    private readonly TokenSettings _tokenSettings;
 
     public CustomAuthenticationFilter(IConfiguration configuration)
     {
-        _apiKey = configuration.GetSection("TokenSettings:API_Key").Value ?? string.Empty;
-        _secretKey = configuration.GetSection("TokenSettings:Secret_Key").Value ?? string.Empty;
+        _tokenSettings = configuration.GetSection("TokenSettings").Get<TokenSettings>() ?? new TokenSettings();
     }
 
     public void OnAuthorization(AuthorizationFilterContext context)
@@ -32,11 +31,8 @@ public class CustomAuthenticationFilter : Attribute, IAuthorizationFilter
         if (string.Equals(controllerName, "Health", StringComparison.OrdinalIgnoreCase))
             return;
 
-        context.HttpContext.Request.Headers.TryGetValue("API_Key", out var apiKeyHeader);
-        context.HttpContext.Request.Headers.TryGetValue("Secret_Key", out var secretKeyHeader);
-
-        var apiKey = apiKeyHeader.ToString();
-        var secretKey = secretKeyHeader.ToString();
+        var apiKey = FirstHeader(context, "API_Key", "api_key");
+        var secretKey = FirstHeader(context, "Secret_Key", "secret_key");
 
         if (string.IsNullOrWhiteSpace(apiKey) && string.IsNullOrWhiteSpace(secretKey))
         {
@@ -56,11 +52,21 @@ public class CustomAuthenticationFilter : Attribute, IAuthorizationFilter
             return;
         }
 
-        if (!string.Equals(apiKey, _apiKey, StringComparison.Ordinal) ||
-            !string.Equals(secretKey, _secretKey, StringComparison.Ordinal))
+        if (!_tokenSettings.Matches(apiKey, secretKey))
         {
             context.Result = Fail(actionName, StatusInformation.API_Key_Is_Secret_Key_Invalid);
         }
+    }
+
+    private static string FirstHeader(AuthorizationFilterContext context, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (context.HttpContext.Request.Headers.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value))
+                return value.ToString();
+        }
+
+        return string.Empty;
     }
 
     private static JsonResult Fail(string actionName, StatusInformation status)

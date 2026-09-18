@@ -13,8 +13,10 @@ namespace RM_Backend_API.ActionFilters
         public void OnAuthorization(AuthorizationFilterContext context)
         {
             var tokenSettings = context.HttpContext.RequestServices.GetRequiredService<TokenSettings>();
-            var apiKey = context.HttpContext.Request.Headers["api_key"].FirstOrDefault();
-            var secretKey = context.HttpContext.Request.Headers["secret_key"].FirstOrDefault();
+            var apiKey = context.HttpContext.Request.Headers["API_Key"].FirstOrDefault()
+                ?? context.HttpContext.Request.Headers["api_key"].FirstOrDefault();
+            var secretKey = context.HttpContext.Request.Headers["Secret_Key"].FirstOrDefault()
+                ?? context.HttpContext.Request.Headers["secret_key"].FirstOrDefault();
 
             StatusInformation statusCode;
             string message;
@@ -34,8 +36,7 @@ namespace RM_Backend_API.ActionFilters
                 statusCode = StatusInformation.Secret_Key_Is_Null;
                 message = "Secret Key is required for admin access.";
             }
-            else if (!string.Equals(apiKey, tokenSettings.API_Key, StringComparison.Ordinal) ||
-                     !string.Equals(secretKey, tokenSettings.Secret_Key, StringComparison.Ordinal))
+            else if (!tokenSettings.Matches(apiKey, secretKey))
             {
                 statusCode = StatusInformation.API_Key_Is_Secret_Key_Invalid;
                 message = "Invalid API Key or Secret Key.";
